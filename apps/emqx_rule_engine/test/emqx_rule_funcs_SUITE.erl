@@ -483,6 +483,11 @@ t_regex_replace(_) ->
     ?assertEqual(<<"aebed">>, apply_func(regex_replace, [<<"accbcd">>, <<"c+">>, <<"e">>])),
     ?assertEqual(<<"a[cc]b[c]d">>, apply_func(regex_replace, [<<"accbcd">>, <<"c+">>, <<"[&]">>])).
 
+t_jq(_) ->
+    ?assertEqual(<<"{\"b\":2}">>, apply_func(jq, [<<".">>, apply_func(json_decode, [<<"{\"b\": 2}">>])])),
+    ?assertEqual(<<"6">>, apply_func(jq, [<<".+1">>, apply_func(json_decode, [<<"5">>])])),
+    ?assertEqual(<<"{\"b\":2}">>, apply_func(jq, [<<".">>, <<"{\"b\": 2}">>])).
+
 ascii_string() -> list(range(0,127)).
 
 bin(S) -> iolist_to_binary(S).
