@@ -728,6 +728,18 @@ t_sqlselect_00(_Config) ->
         )
     ).
 
+
+t_sqlselect_001(_Config) ->
+    %% Verify that the jq function can be called from SQL
+    Sql = "select int(jq('.what + .what', payload)) as ans "
+          "from \"t/#\" ",
+    ?assertMatch({ok,#{<<"ans">> := 8}},
+                 emqx_rule_sqltester:test(
+                    #{sql => Sql,
+                      context =>
+                        #{payload => #{<<"what">> => 4},
+                          topic => <<"t/a">>}})).
+
 t_sqlselect_01(_Config) ->
     SQL =
         "SELECT json_decode(payload) as p, payload "
