@@ -694,6 +694,10 @@ find_s(S, P, Dir) ->
         SubStr -> SubStr
     end.
 
+-spec jq(FilterProgram, JSON) -> Result when
+    FilterProgram :: binary(),
+    JSON :: binary() | term(),
+    Result :: binary(). 
 jq(FilterProgram, JSONBin)
   when is_binary(FilterProgram), is_binary(JSONBin) ->
     case jq:parse(FilterProgram, JSONBin) of
