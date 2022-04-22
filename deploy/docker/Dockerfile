@@ -3,6 +3,8 @@ ARG RUN_FROM=alpine:3.15.1
 FROM ${BUILD_FROM} AS builder
 
 RUN apk add --no-cache \
+    autoconf \
+    automake \
     git \
     curl \
     gcc \
