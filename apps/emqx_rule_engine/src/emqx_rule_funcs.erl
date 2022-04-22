@@ -787,7 +787,7 @@ jq(FilterProgram, JSONBin)
     case jq:parse(FilterProgram, JSONBin) of
         {ok, Result} ->
             [json_decode(JSONString) || JSONString <- Result];
-        {error, ErrorReason} -> erlang:error(ErrorReason)
+        {error, ErrorReason} -> erlang:throw({jq_exception, ErrorReason})
     end;
 jq(FilterProgram, JSONTerm) when is_binary(FilterProgram) ->
     JSONBin = json_encode(JSONTerm),
