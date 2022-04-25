@@ -139,7 +139,7 @@ jobs:
     - name: prepare
       run: |
         brew update
-        brew install curl zip unzip gnu-sed kerl unixodbc freetds
+        brew install curl zip unzip gnu-sed kerl unixodbc freetds automake bison
         echo "/usr/local/bin" >> $GITHUB_PATH
         git config --global credential.helper store
     - uses: actions/cache@v2

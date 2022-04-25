@@ -148,7 +148,7 @@ jobs:
     - name: prepare
       run: |
         brew update
-        brew install curl zip unzip gnu-sed kerl unixodbc freetds
+        brew install curl zip unzip gnu-sed kerl unixodbc freetds automake bison
         echo "/usr/local/bin" >> $GITHUB_PATH
         echo "EMQX_NAME=${{ matrix.profile }}" >> $GITHUB_ENV
     - uses: actions/cache@v2
