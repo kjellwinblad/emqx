@@ -5,20 +5,21 @@ FROM ${BUILD_FROM} AS builder
 RUN apk add --no-cache \
     autoconf \
     automake \
-    git \
-    curl \
-    gcc \
-    g++ \
-    make \
-    perl \
-    ncurses-dev \
-    openssl-dev \
-    coreutils \
+    bash \
     bsd-compat-headers \
+    coreutils \
+    curl \
+    g++ \
+    gcc \
+    git \
+    jq \
     libc-dev \
     libstdc++ \
-    bash \
-    jq
+    libtool \
+    make \
+    ncurses-dev \
+    openssl-dev \
+    perl
 
 COPY . /emqx
 
