@@ -65,6 +65,9 @@ jobs:
           _build/default/lib/quicer/
           deps/quicer/
         key: ${{ matrix.os }}-${{ matrix.elixir }}-${{ matrix.otp }}-amd64-${{ steps.deps-refs.outputs.DEP_QUICER_REF }}
+    - name: Work around https://github.com/actions/checkout/issues/766
+      run: |
+        git config --global --add safe.directory "$GITHUB_WORKSPACE"
     - name: build and test tgz package
       run: |
         make ${EMQX_NAME}-tgz
