@@ -6,6 +6,7 @@ RUN apk add --no-cache \
     autoconf \
     automake \
     bash \
+    bison \
     bsd-compat-headers \
     coreutils \
     curl \
