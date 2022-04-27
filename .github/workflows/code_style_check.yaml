@@ -13,6 +13,9 @@ jobs:
       - name: Check line-break at EOF
         run: |
           ./scripts/check-nl-at-eof.sh
+      - name: Work around https://github.com/actions/checkout/issues/766
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Check Elixir code formatting
         run: |
           mix format --check-formatted
