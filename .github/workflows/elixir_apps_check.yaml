@@ -37,6 +37,9 @@ jobs:
           fetch-depth: 0
       - name: ensure rebar
         run: ./scripts/ensure-rebar3.sh
+      - name: Work around https://github.com/actions/checkout/issues/766
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: check applications
         run: ./scripts/check-elixir-applications.exs
       - name: check applications started with emqx_machine
