@@ -10,6 +10,7 @@ RUN apk add --no-cache \
     bsd-compat-headers \
     coreutils \
     curl \
+    flex \
     g++ \
     gcc \
     git \
