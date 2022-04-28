@@ -782,12 +782,14 @@ find_s(S, P, Dir) ->
     FilterProgram :: binary(),
     JSON :: binary() | term(),
     Result :: [term()].
-jq(FilterProgram, JSONBin)
-  when is_binary(FilterProgram), is_binary(JSONBin) ->
+jq(FilterProgram, JSONBin) when
+    is_binary(FilterProgram), is_binary(JSONBin)
+->
     case jq:parse(FilterProgram, JSONBin) of
         {ok, Result} ->
             [json_decode(JSONString) || JSONString <- Result];
-        {error, ErrorReason} -> erlang:throw({jq_exception, ErrorReason})
+        {error, ErrorReason} ->
+            erlang:throw({jq_exception, ErrorReason})
     end;
 jq(FilterProgram, JSONTerm) when is_binary(FilterProgram) ->
     JSONBin = json_encode(JSONTerm),

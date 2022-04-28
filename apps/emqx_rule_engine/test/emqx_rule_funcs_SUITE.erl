@@ -634,14 +634,20 @@ jq_1_elm_res(JSONString) ->
     [apply_func(json_decode, [Bin])].
 
 t_jq(_) ->
-    ?assertEqual(jq_1_elm_res("{\"b\":2}"),
-                 apply_func(jq, [<<".">>, apply_func(json_decode, [<<"{\"b\": 2}">>])])),
-    ?assertEqual(jq_1_elm_res("6"),
-                 apply_func(jq, [<<".+1">>, apply_func(json_decode, [<<"5">>])])),
-    ?assertEqual(jq_1_elm_res("{\"b\":2}"),
-                 apply_func(jq, [<<".">>, <<"{\"b\": 2}">>])).
+    ?assertEqual(
+        jq_1_elm_res("{\"b\":2}"),
+        apply_func(jq, [<<".">>, apply_func(json_decode, [<<"{\"b\": 2}">>])])
+    ),
+    ?assertEqual(
+        jq_1_elm_res("6"),
+        apply_func(jq, [<<".+1">>, apply_func(json_decode, [<<"5">>])])
+    ),
+    ?assertEqual(
+        jq_1_elm_res("{\"b\":2}"),
+        apply_func(jq, [<<".">>, <<"{\"b\": 2}">>])
+    ).
 
-ascii_string() -> list(range(0,127)).
+ascii_string() -> list(range(0, 127)).
 
 bin(S) -> iolist_to_binary(S).
 

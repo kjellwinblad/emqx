@@ -729,27 +729,42 @@ t_sqlselect_00(_Config) ->
         )
     ).
 
-
 t_sqlselect_001(_Config) ->
     %% Verify that the jq function can be called from SQL
-    Sql = "select jq('.what + .what', payload) as ans "
-          "from \"t/#\" ",
-    ?assertMatch({ok,#{<<"ans">> := [8]}},
-                 emqx_rule_sqltester:test(
-                    #{sql => Sql,
-                      context =>
-                        #{payload => #{<<"what">> => 4},
-                          topic => <<"t/a">>}})),
-    Sql2 = "SELECT jq('.a|.[]', "
-    "'{\"a\": [{\"b\": 1}, {\"b\": 2}, {\"b\": 3}]}') "
-    "as jq_output, "
-    "   jq_output[1].b as first_b from \"t/#\" ",
-    ?assertMatch({ok,#{<<"first_b">> := 1}},
-                 emqx_rule_sqltester:test(
-                    #{sql => Sql2,
-                      context =>
-                        #{payload => #{<<"what">> => 4},
-                          topic => <<"t/a">>}})).
+    Sql =
+        "select jq('.what + .what', payload) as ans "
+        "from \"t/#\" ",
+    ?assertMatch(
+        {ok, #{<<"ans">> := [8]}},
+        emqx_rule_sqltester:test(
+            #{
+                sql => Sql,
+                context =>
+                    #{
+                        payload => #{<<"what">> => 4},
+                        topic => <<"t/a">>
+                    }
+            }
+        )
+    ),
+    Sql2 =
+        "SELECT jq('.a|.[]', "
+        "'{\"a\": [{\"b\": 1}, {\"b\": 2}, {\"b\": 3}]}') "
+        "as jq_output, "
+        "   jq_output[1].b as first_b from \"t/#\" ",
+    ?assertMatch(
+        {ok, #{<<"first_b">> := 1}},
+        emqx_rule_sqltester:test(
+            #{
+                sql => Sql2,
+                context =>
+                    #{
+                        payload => #{<<"what">> => 4},
+                        topic => <<"t/a">>
+                    }
+            }
+        )
+    ).
 
 t_sqlselect_01(_Config) ->
     SQL =
