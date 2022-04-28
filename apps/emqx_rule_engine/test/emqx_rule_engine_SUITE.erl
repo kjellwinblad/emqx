@@ -740,7 +740,10 @@ t_sqlselect_001(_Config) ->
                       context =>
                         #{payload => #{<<"what">> => 4},
                           topic => <<"t/a">>}})),
-    Sql2 = "SELECT jq('.a|.[]', '{\"a\": [{\"b\": 1}, {\"b\": 2}, {\"b\": 3}]}') as jq_output, jq_output[1].b as first_b from \"t/#\" ",
+    Sql2 = "SELECT jq('.a|.[]', "
+    "'{\"a\": [{\"b\": 1}, {\"b\": 2}, {\"b\": 3}]}') "
+    "as jq_output, "
+    "   jq_output[1].b as first_b from \"t/#\" ",
     ?assertMatch({ok,#{<<"first_b">> := 1}},
                  emqx_rule_sqltester:test(
                     #{sql => Sql2,
