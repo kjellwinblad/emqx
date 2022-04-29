@@ -5,7 +5,7 @@
     {vsn, "5.0.0"},
     {modules, []},
     {registered, [emqx_rule_engine_sup, emqx_rule_engine]},
-    {applications, [kernel, stdlib, rulesql, getopt]},
+    {applications, [kernel, stdlib, rulesql, getopt, jq]},
     {mod, {emqx_rule_engine_app, []}},
     {env, []},
     {licenses, ["Apache-2.0"]},
