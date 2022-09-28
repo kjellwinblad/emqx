@@ -222,6 +222,7 @@ producers_config(BridgeName, ClientId, Input) ->
             disk -> {false, replayq_dir(ClientId)};
             hybrid -> {true, replayq_dir(ClientId)}
         end,
+    BridgeNameBin = erlang:atom_to_binary(BridgeName),
     #{
         name => make_producer_name(BridgeName),
         partitioner => PartitionStrategy,
@@ -234,7 +235,9 @@ producers_config(BridgeName, ClientId, Input) ->
         required_acks => RequiredAcks,
         max_batch_bytes => MaxBatchBytes,
         max_send_ahead => MaxInflight - 1,
-        compression => Compression
+        compression => Compression,
+        metrics_module => emqx_resource_metrics,
+        metrics_data => <<<<"bridge:kafka:">>/binary, BridgeNameBin/binary>>
     }.
 
 replayq_dir(ClientId) ->

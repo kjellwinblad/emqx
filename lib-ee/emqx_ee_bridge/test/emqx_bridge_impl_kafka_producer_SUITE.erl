@@ -353,6 +353,7 @@ publish_helper(#{
         "instance_id" => InstId,
         "ssl" => SSLSettings
     }),
+    emqx_bridge_resource:create(kafka, erlang:list_to_atom(Name), Conf, #{}),
     %% To make sure we get unique value
     timer:sleep(1),
     Time = erlang:monotonic_time(),
@@ -371,6 +372,7 @@ publish_helper(#{
     {ok, {_, [KafkaMsg]}} = brod:fetch(kafka_hosts(), KafkaTopic, 0, Offset),
     ?assertMatch(#kafka_message{key = BinTime}, KafkaMsg),
     ok = ?PRODUCER:on_stop(InstId, State),
+    % emqx_bridge_resource:remove(InstId),
     ok.
 
 config(Args) ->
