@@ -254,11 +254,13 @@ reset_metrics(ResId) ->
 %% =================================================================================
 -spec query(resource_id(), Request :: term()) -> Result :: term().
 query(ResId, Request) ->
+    erlang:display(xxxxxxxxxxxxxxx_query_1),
     query(ResId, Request, #{}).
 
 -spec query(resource_id(), Request :: term(), emqx_resource_worker:query_opts()) ->
     Result :: term().
 query(ResId, Request, Opts) ->
+    erlang:display(xxxxxxxxxxxxxxx_query_2),
     case emqx_resource_manager:ets_lookup(ResId) of
         {ok, _Group, #{query_mode := QM, mod := Module}} ->
             IsBufferSupported = is_buffer_supported(Module),
@@ -276,10 +278,12 @@ query(ResId, Request, Opts) ->
 
 -spec simple_sync_query(resource_id(), Request :: term()) -> Result :: term().
 simple_sync_query(ResId, Request) ->
+    erlang:display(xxxxxxxxxxxxxxx_query_3),
     emqx_resource_worker:simple_sync_query(ResId, Request).
 
 -spec simple_async_query(resource_id(), Request :: term(), reply_fun()) -> Result :: term().
 simple_async_query(ResId, Request, ReplyFun) ->
+    erlang:display(xxxxxxxxxxxxxxx_query_4),
     emqx_resource_worker:simple_async_query(ResId, Request, ReplyFun).
 
 -spec start(resource_id()) -> ok | {error, Reason :: term()}.

@@ -240,8 +240,8 @@ producers_config(BridgeName, ClientId, Input) ->
         max_batch_bytes => MaxBatchBytes,
         max_send_ahead => MaxInflight - 1,
         compression => Compression,
-        metrics_module => emqx_resource_metrics,
-        telemetry_meta_data => #{data => <<<<"bridge:kafka:">>/binary, BridgeNameBin/binary>>}
+        telemetry_meta_data =>
+            #{bridge_id => <<<<"bridge:kafka:">>/binary, BridgeNameBin/binary>>}
     }.
 
 replayq_dir(ClientId) ->
@@ -277,110 +277,71 @@ get_required(Field, Config, Throw) ->
     Value.
 
 handle_telemetry_event(
-    [wolff, batching],
-    #{counter_inc := Val},
-    #{data := ID},
-    _
-) ->
-    emqx_resource_metrics:batching_inc(ID, Val);
-handle_telemetry_event(
     [wolff, dropped],
     #{counter_inc := Val},
-    #{data := ID},
+    #{bridge_id := ID},
     _
-) ->
+) when is_integer(Val) ->
     emqx_resource_metrics:dropped_inc(ID, Val);
-handle_telemetry_event(
-    [wolff, dropped_other],
-    #{counter_inc := Val},
-    #{data := ID},
-    _
-) ->
-    emqx_resource_metrics:dropped_other_inc(ID, Val);
 handle_telemetry_event(
     [wolff, dropped_queue_full],
     #{counter_inc := Val},
-    #{data := ID},
+    #{bridge_id := ID},
     _
-) ->
+) when is_integer(Val) ->
     emqx_resource_metrics:dropped_queue_full_inc(ID, Val);
-handle_telemetry_event(
-    [wolff, dropped_queue_not_enabled],
-    #{counter_inc := Val},
-    #{data := ID},
-    _
-) ->
-    emqx_resource_metrics:dropped_queue_not_enabled_inc(ID, Val);
-handle_telemetry_event(
-    [wolff, dropped_resource_not_found],
-    #{counter_inc := Val},
-    #{data := ID},
-    _
-) ->
-    emqx_resource_metrics:dropped_resource_not_found_inc(ID, Val);
-handle_telemetry_event(
-    [wolff, dropped_resource_stopped],
-    #{counter_inc := Val},
-    #{data := ID},
-    _
-) ->
-    emqx_resource_metrics:dropped_resource_stopped_inc(ID, Val);
-handle_telemetry_event(
-    [wolff, matched],
-    #{counter_inc := Val},
-    #{data := ID},
-    _
-) ->
-    emqx_resource_metrics:matched_inc(ID, Val);
 handle_telemetry_event(
     [wolff, queuing],
     #{counter_inc := Val},
-    #{data := ID},
+    #{bridge_id := ID},
     _
-) ->
+) when is_integer(Val) ->
     emqx_resource_metrics:queuing_inc(ID, Val);
 handle_telemetry_event(
     [wolff, retried],
     #{counter_inc := Val},
-    #{data := ID},
+    #{bridge_id := ID},
     _
-) ->
+) when is_integer(Val) ->
     emqx_resource_metrics:retried_inc(ID, Val);
 handle_telemetry_event(
     [wolff, failed],
     #{counter_inc := Val},
-    #{data := ID},
+    #{bridge_id := ID},
     _
-) ->
+) when is_integer(Val) ->
     emqx_resource_metrics:failed_inc(ID, Val);
 handle_telemetry_event(
     [wolff, inflight],
     #{counter_inc := Val},
-    #{data := ID},
+    #{bridge_id := ID},
     _
-) ->
+) when is_integer(Val) ->
     emqx_resource_metrics:inflight_inc(ID, Val);
 handle_telemetry_event(
     [wolff, retried_failed],
     #{counter_inc := Val},
-    #{data := ID},
+    #{bridge_id := ID},
     _
-) ->
+) when is_integer(Val) ->
     emqx_resource_metrics:retried_failed_inc(ID, Val);
 handle_telemetry_event(
     [wolff, retried_success],
     #{counter_inc := Val},
-    #{data := ID},
+    #{bridge_id := ID},
     _
-) ->
+) when is_integer(Val) ->
     emqx_resource_metrics:retried_success_inc(ID, Val);
 handle_telemetry_event(
     [wolff, success],
     #{counter_inc := Val},
-    #{data := ID},
+    #{bridge_id := ID},
     _
-) ->
-    emqx_resource_metrics:success_inc(ID, Val).
+) when is_integer(Val) ->
+    emqx_resource_metrics:success_inc(ID, Val);
+handle_telemetry_event(_EventId, _Metrics, _MetaData, _Config) ->
+    %% Event that we do not handle
+    ok.
 
 maybe_install_wolff_telemetry_handlers() ->
     %% Attach event handlers for Kafka telemetry events. If a handler with the
@@ -389,14 +350,8 @@ maybe_install_wolff_telemetry_handlers() ->
         %% unique handler id
         <<"emqx-bridge-kafka-producer-telemetry-handler">>,
         [
-            [wolff, batching],
             [wolff, dropped],
-            [wolff, dropped_other],
             [wolff, dropped_queue_full],
-            [wolff, dropped_queue_not_enabled],
-            [wolff, dropped_resource_not_found],
-            [wolff, dropped_resource_stopped],
-            [wolff, matched],
             [wolff, queuing],
             [wolff, retried],
             [wolff, failed],

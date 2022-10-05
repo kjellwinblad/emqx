@@ -148,20 +148,20 @@ set_special_configs(_) ->
 %% Test cases for all combinations of SSL, no SSL and authentication types
 %%------------------------------------------------------------------------------
 
-t_publish_no_auth(_CtConfig) ->
-    publish_with_and_without_ssl("none").
+% t_publish_no_auth(_CtConfig) ->
+%     publish_with_and_without_ssl("none").
 
-t_publish_sasl_plain(_CtConfig) ->
-    publish_with_and_without_ssl(valid_sasl_plain_settings()).
+% t_publish_sasl_plain(_CtConfig) ->
+%     publish_with_and_without_ssl(valid_sasl_plain_settings()).
 
-t_publish_sasl_scram256(_CtConfig) ->
-    publish_with_and_without_ssl(valid_sasl_scram256_settings()).
+% t_publish_sasl_scram256(_CtConfig) ->
+%     publish_with_and_without_ssl(valid_sasl_scram256_settings()).
 
-t_publish_sasl_scram512(_CtConfig) ->
-    publish_with_and_without_ssl(valid_sasl_scram512_settings()).
+% t_publish_sasl_scram512(_CtConfig) ->
+%     publish_with_and_without_ssl(valid_sasl_scram512_settings()).
 
-t_publish_sasl_kerberos(_CtConfig) ->
-    publish_with_and_without_ssl(valid_sasl_kerberos_settings()).
+% t_publish_sasl_kerberos(_CtConfig) ->
+%     publish_with_and_without_ssl(valid_sasl_kerberos_settings()).
 
 %%------------------------------------------------------------------------------
 %% Test cases for REST api
@@ -175,8 +175,8 @@ show(X) ->
 t_kafka_bridge_rest_api_plain_text(_CtConfig) ->
     kafka_bridge_rest_api_all_auth_methods(false).
 
-t_kafka_bridge_rest_api_ssl(_CtConfig) ->
-    kafka_bridge_rest_api_all_auth_methods(true).
+% t_kafka_bridge_rest_api_ssl(_CtConfig) ->
+%     kafka_bridge_rest_api_all_auth_methods(true).
 
 kafka_bridge_rest_api_all_auth_methods(UseSSL) ->
     NormalHostsString =
@@ -243,10 +243,16 @@ kafka_bridge_rest_api_all_auth_methods(UseSSL) ->
     ok.
 
 kafka_bridge_rest_api_helper(Config) ->
+    BridgeType = "kafka",
+    BridgeName = "my_kafka_bridge",
+    BridgeID = emqx_bridge_resource:bridge_id(
+        erlang:list_to_binary(BridgeType),
+        erlang:list_to_binary(BridgeName)
+    ),
     UrlEscColon = "%3A",
-    BridgeIdUrlEnc = "kafka" ++ UrlEscColon ++ "my_kafka_bridge",
+    BridgeIdUrlEnc = BridgeType ++ UrlEscColon ++ BridgeName,
     BridgesParts = ["bridges"],
-    BridgesPartsId = ["bridges", BridgeIdUrlEnc],
+    BridgesPartsIdDeleteAlsoActions = ["bridges", BridgeIdUrlEnc ++ "?also_delete_dep_actions"],
     OpUrlFun = fun(OpName) -> ["bridges", BridgeIdUrlEnc, "operation", OpName] end,
     BridgesPartsOpDisable = OpUrlFun("disable"),
     BridgesPartsOpEnable = OpUrlFun("enable"),
@@ -271,12 +277,13 @@ kafka_bridge_rest_api_helper(Config) ->
             show(
                 '========================================== DELETE ========================================'
             ),
-            {ok, 204, <<>>} = show(http_delete(BridgesPartsId));
+            {ok, 204, <<>>} = show(http_delete(BridgesPartsIdDeleteAlsoActions));
         false ->
             ok
     end,
     false = MyKafkaBridgeExists(),
     %% Create new Kafka bridge
+    KafkaTopic = "test-topic-one-partition",
     CreateBodyTmp = #{
         <<"type">> => <<"kafka">>,
         <<"name">> => <<"my_kafka_bridge">>,
@@ -288,7 +295,7 @@ kafka_bridge_rest_api_helper(Config) ->
                 topic => <<"t/#">>
             },
             <<"kafka">> => #{
-                <<"topic">> => <<"test-topic-one-partition">>
+                <<"topic">> => erlang:list_to_binary(KafkaTopic)
             }
         }
     },
@@ -300,6 +307,32 @@ kafka_bridge_rest_api_helper(Config) ->
     {ok, 201, _Data} = show(http_post(BridgesParts, show(CreateBody))),
     %% Check that the new bridge is in the list of bridges
     true = MyKafkaBridgeExists(),
+    %% Create a rule that uses the bridge
+    {ok, 201, _Rule} = http_post(
+        ["rules"],
+        #{
+            <<"name">> => <<"t_kafka_bridge">>,
+            <<"enable">> => true,
+            <<"actions">> => [BridgeID],
+            <<"sql">> => <<"SELECT * from \"kafka_bridge_topic/#\"">>
+        }
+    ),
+    erlang:display({bridge_created, MyKafkaBridgeExists()}),
+    %% Send message to topic and check that it got forwarded to Kafka
+    {ok, Offset} = resolve_kafka_offset(kafka_hosts(), KafkaTopic, 0),
+    erlang:display({offset_before, Offset}),
+    Body = <<"message from EMQX">>,
+    %% Give some time for the bridge and rule to be installed
+    timer:sleep(1000),
+    erlang:display({sending_messagezzzzzzzzzzzzzzzzzzzzzzzz, Config}),
+    PublishRes = emqx:publish(emqx_message:make(<<"kafka_bridge_topic/1">>, Body)),
+    erlang:display({publish_res, PublishRes}),
+    timer:sleep(1000),
+    erlang:display(message_sent_zzzzzzzzzzzzzzzzzzzzzzzz),
+    BrodOut = brod:fetch(kafka_hosts(), KafkaTopic, 0, Offset),
+    erlang:display({brod_fetch_zzzzzzzzzzzzzzzzzzzz, BrodOut}),
+    {ok, {_, [KafkaMsg]}} = show(BrodOut),
+    Body = KafkaMsg#kafka_message.value,
     %% Perform operations
     {ok, 200, _} = show(http_post(show(BridgesPartsOpDisable), #{})),
     {ok, 200, _} = show(http_post(show(BridgesPartsOpDisable), #{})),
@@ -309,7 +342,7 @@ kafka_bridge_rest_api_helper(Config) ->
     {ok, 200, _} = show(http_post(show(BridgesPartsOpStop), #{})),
     {ok, 200, _} = show(http_post(show(BridgesPartsOpRestart), #{})),
     %% Cleanup
-    {ok, 204, _} = show(http_delete(BridgesPartsId)),
+    {ok, 204, _} = show(http_delete(BridgesPartsIdDeleteAlsoActions)),
     false = MyKafkaBridgeExists(),
     ok.
 
@@ -370,7 +403,7 @@ publish_helper(#{
     OnQueryRes = ?PRODUCER:on_query(InstId, {send_message, Msg}, State),
     ok = OnQueryRes,
     {ok, {_, [KafkaMsg]}} = brod:fetch(kafka_hosts(), KafkaTopic, 0, Offset),
-    ?assertMatch(#kafka_message{key = BinTime}, KafkaMsg),
+    ?assertMatch(#kafka_message{key = bintime}, KafkaMsg),
     ok = ?PRODUCER:on_stop(InstId, State),
     % emqx_bridge_resource:remove(InstId),
     ok.

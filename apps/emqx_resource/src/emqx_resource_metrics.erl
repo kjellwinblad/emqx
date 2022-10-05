@@ -1,8 +1,7 @@
 -module(emqx_resource_metrics).
 
 -export([
-    batching_inc/1,
-    batching_inc/2,
+    batching_change/2,
     dropped_inc/1,
     dropped_inc/2,
     dropped_other_inc/1,
@@ -17,12 +16,10 @@
     dropped_resource_stopped_inc/2,
     failed_inc/1,
     failed_inc/2,
-    inflight_inc/1,
-    inflight_inc/2,
+    inflight_change/2,
     matched_inc/1,
     matched_inc/2,
-    queuing_inc/1,
-    queuing_inc/2,
+    queuing_change/2,
     retried_inc/1,
     retried_inc/2,
     retried_failed_inc/1,
@@ -35,90 +32,104 @@
 
 -define(RES_METRICS, resource_metrics).
 
-batching_inc(ID) ->
-    emqx_metrics_worker:inc(?RES_METRICS, ID, 'batching').
+%% Gauges (value can go both up and down):
+%% --------------------------------------
 
-batching_inc(ID, Val) ->
+%% @doc Count of messages that are currently accumulated in memory waiting for
+%% being sent in one batch
+batching_change(ID, Val) ->
     emqx_metrics_worker:inc(?RES_METRICS, ID, 'batching', Val).
 
+%% @doc Count of messages that are currently queuing. [Gauge]
+queuing_change(ID, Val) ->
+    emqx_metrics_worker:inc(?RES_METRICS, ID, 'queuing', Val).
+
+%% @doc Count of messages that were sent asynchronously but ACKs are not
+%% received. [Gauge]
+inflight_change(ID, Val) ->
+    emqx_metrics_worker:inc(?RES_METRICS, ID, 'inflight', Val).
+
+%% Counters (value can only got up):
+%% --------------------------------------
+
+%% @doc Count of messages dropped
 dropped_inc(ID) ->
     emqx_metrics_worker:inc(?RES_METRICS, ID, 'dropped').
 
 dropped_inc(ID, Val) ->
     emqx_metrics_worker:inc(?RES_METRICS, ID, 'dropped', Val).
 
+%% @doc Count of messages dropped due to other reasons
 dropped_other_inc(ID) ->
     emqx_metrics_worker:inc(?RES_METRICS, ID, 'dropped.other').
 
 dropped_other_inc(ID, Val) ->
     emqx_metrics_worker:inc(?RES_METRICS, ID, 'dropped.other', Val).
 
+%% @doc Count of messages dropped because the queue was full
 dropped_queue_full_inc(ID) ->
     emqx_metrics_worker:inc(?RES_METRICS, ID, 'dropped.queue_full').
 
 dropped_queue_full_inc(ID, Val) ->
     emqx_metrics_worker:inc(?RES_METRICS, ID, 'dropped.queue_full', Val).
 
+%% @doc Count of messages dropped because the queue was not enabled
 dropped_queue_not_enabled_inc(ID) ->
     emqx_metrics_worker:inc(?RES_METRICS, ID, 'dropped.queue_not_enabled').
 
 dropped_queue_not_enabled_inc(ID, Val) ->
     emqx_metrics_worker:inc(?RES_METRICS, ID, 'dropped.queue_not_enabled', Val).
 
+%% @doc Count of messages dropped because the resource was not found
 dropped_resource_not_found_inc(ID) ->
     emqx_metrics_worker:inc(?RES_METRICS, ID, 'dropped.resource_not_found').
 
 dropped_resource_not_found_inc(ID, Val) ->
     emqx_metrics_worker:inc(?RES_METRICS, ID, 'dropped.resource_not_found', Val).
 
+%% @doc Count of messages dropped because the resource was stopped
 dropped_resource_stopped_inc(ID) ->
     emqx_metrics_worker:inc(?RES_METRICS, ID, 'dropped.resource_stopped').
 
 dropped_resource_stopped_inc(ID, Val) ->
     emqx_metrics_worker:inc(?RES_METRICS, ID, 'dropped.resource_stopped', Val).
 
+%% @doc Count of how many times this bridge has been matched and queried
 matched_inc(ID) ->
     emqx_metrics_worker:inc(?RES_METRICS, ID, 'matched').
 
 matched_inc(ID, Val) ->
     emqx_metrics_worker:inc(?RES_METRICS, ID, 'matched', Val).
 
-queuing_inc(ID) ->
-    emqx_metrics_worker:inc(?RES_METRICS, ID, 'queuing').
-
-queuing_inc(ID, Val) ->
-    emqx_metrics_worker:inc(?RES_METRICS, ID, 'queuing', Val).
-
+%% @doc The number of times message sends have been retried
 retried_inc(ID) ->
     emqx_metrics_worker:inc(?RES_METRICS, ID, 'retried').
 
 retried_inc(ID, Val) ->
     emqx_metrics_worker:inc(?RES_METRICS, ID, 'retried', Val).
 
+%% @doc Count of message sends that have failed
 failed_inc(ID) ->
     emqx_metrics_worker:inc(?RES_METRICS, ID, 'failed').
 
 failed_inc(ID, Val) ->
     emqx_metrics_worker:inc(?RES_METRICS, ID, 'failed', Val).
 
-inflight_inc(ID) ->
-    emqx_metrics_worker:inc(?RES_METRICS, ID, 'inflight').
-
-inflight_inc(ID, Val) ->
-    emqx_metrics_worker:inc(?RES_METRICS, ID, 'inflight', Val).
-
+%%% @doc Count of message sends that have failed after having been retried
 retried_failed_inc(ID) ->
     emqx_metrics_worker:inc(?RES_METRICS, ID, 'retried.failed').
 
 retried_failed_inc(ID, Val) ->
     emqx_metrics_worker:inc(?RES_METRICS, ID, 'retried.failed', Val).
 
+%% @doc Count messages that were sucessfully sent after at least one retry
 retried_success_inc(ID) ->
     emqx_metrics_worker:inc(?RES_METRICS, ID, 'retried.success').
 
 retried_success_inc(ID, Val) ->
     emqx_metrics_worker:inc(?RES_METRICS, ID, 'retried.success', Val).
 
+%% @doc Count of messages that have been sent successfully
 success_inc(ID) ->
     emqx_metrics_worker:inc(?RES_METRICS, ID, 'success').
 

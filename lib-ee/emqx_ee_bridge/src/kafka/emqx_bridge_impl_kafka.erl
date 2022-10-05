@@ -27,6 +27,13 @@ on_stop(InstId, State) ->
     emqx_bridge_impl_kafka_producer:on_stop(InstId, State).
 
 on_query(InstId, Msg, State) ->
+    erlang:display(yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy),
+    try
+        erlang:error(on_query_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx)
+    catch
+        _:_:Stacktrace ->
+            erlang:display(Stacktrace)
+    end,
     emqx_bridge_impl_kafka_producer:on_query(InstId, Msg, State).
 
 on_get_status(InstId, State) ->
