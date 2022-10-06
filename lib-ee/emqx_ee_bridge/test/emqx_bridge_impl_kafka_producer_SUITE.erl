@@ -254,6 +254,10 @@ kafka_bridge_rest_api_helper(Config) ->
         erlang:list_to_binary(BridgeType),
         erlang:list_to_binary(BridgeName)
     ),
+    ResourceId = emqx_bridge_resource:resource_id(
+        erlang:list_to_binary(BridgeType),
+        erlang:list_to_binary(BridgeName)
+    ),
     UrlEscColon = "%3A",
     BridgeIdUrlEnc = BridgeType ++ UrlEscColon ++ BridgeName,
     BridgesParts = ["bridges"],
@@ -279,9 +283,6 @@ kafka_bridge_rest_api_helper(Config) ->
     case MyKafkaBridgeExists() of
         true ->
             %% Delete the bridge my_kafka_bridge
-            show(
-                '========================================== DELETE ========================================'
-            ),
             {ok, 204, <<>>} = show(http_delete(BridgesPartsIdDeleteAlsoActions));
         false ->
             ok
@@ -333,6 +334,13 @@ kafka_bridge_rest_api_helper(Config) ->
     BrodOut = brod:fetch(kafka_hosts(), KafkaTopic, 0, Offset),
     {ok, {_, [KafkaMsg]}} = show(BrodOut),
     Body = KafkaMsg#kafka_message.value,
+    %% Check crucial counters and gauges
+    1 = emqx_resource_metrics:matched_get(ResourceId),
+    1 = emqx_resource_metrics:success_get(ResourceId),
+    0 = emqx_resource_metrics:dropped_get(ResourceId),
+    0 = emqx_resource_metrics:failed_get(ResourceId),
+    0 = emqx_resource_metrics:inflight_get(ResourceId),
+    0 = emqx_resource_metrics:queuing_get(ResourceId),
     %% Perform operations
     {ok, 200, _} = show(http_post(show(BridgesPartsOpDisable), #{})),
     {ok, 200, _} = show(http_post(show(BridgesPartsOpDisable), #{})),
