@@ -379,6 +379,7 @@ publish_helper(#{
     Hash = erlang:phash2([HostsString, AuthSettings, SSLSettings]),
     Name = "kafka_bridge_name_" ++ erlang:integer_to_list(Hash),
     InstId = emqx_bridge_resource:resource_id("kafka", Name),
+    BridgeId = emqx_bridge_resource:bridge_id("kafka", Name),
     KafkaTopic = "test-topic-one-partition",
     Conf = config(#{
         "authentication" => AuthSettings,
@@ -406,7 +407,7 @@ publish_helper(#{
     {ok, {_, [KafkaMsg]}} = brod:fetch(kafka_hosts(), KafkaTopic, 0, Offset),
     ?assertMatch(#kafka_message{key = BinTime}, KafkaMsg),
     ok = ?PRODUCER:on_stop(InstId, State),
-    emqx_bridge_resource:remove(InstId),
+    ok = emqx_bridge_resource:remove(BridgeId),
     ok.
 
 config(Args) ->
