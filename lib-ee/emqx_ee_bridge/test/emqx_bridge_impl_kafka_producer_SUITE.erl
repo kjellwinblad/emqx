@@ -148,20 +148,20 @@ set_special_configs(_) ->
 %% Test cases for all combinations of SSL, no SSL and authentication types
 %%------------------------------------------------------------------------------
 
-% t_publish_no_auth(_CtConfig) ->
-%     publish_with_and_without_ssl("none").
+t_publish_no_auth(_CtConfig) ->
+    publish_with_and_without_ssl("none").
 
-% t_publish_sasl_plain(_CtConfig) ->
-%     publish_with_and_without_ssl(valid_sasl_plain_settings()).
+t_publish_sasl_plain(_CtConfig) ->
+    publish_with_and_without_ssl(valid_sasl_plain_settings()).
 
-% t_publish_sasl_scram256(_CtConfig) ->
-%     publish_with_and_without_ssl(valid_sasl_scram256_settings()).
+t_publish_sasl_scram256(_CtConfig) ->
+    publish_with_and_without_ssl(valid_sasl_scram256_settings()).
 
-% t_publish_sasl_scram512(_CtConfig) ->
-%     publish_with_and_without_ssl(valid_sasl_scram512_settings()).
+t_publish_sasl_scram512(_CtConfig) ->
+    publish_with_and_without_ssl(valid_sasl_scram512_settings()).
 
-% t_publish_sasl_kerberos(_CtConfig) ->
-%     publish_with_and_without_ssl(valid_sasl_kerberos_settings()).
+t_publish_sasl_kerberos(_CtConfig) ->
+    publish_with_and_without_ssl(valid_sasl_kerberos_settings()).
 
 %%------------------------------------------------------------------------------
 %% Test cases for REST api
@@ -175,8 +175,8 @@ show(X) ->
 t_kafka_bridge_rest_api_plain_text(_CtConfig) ->
     kafka_bridge_rest_api_all_auth_methods(false).
 
-% t_kafka_bridge_rest_api_ssl(_CtConfig) ->
-%     kafka_bridge_rest_api_all_auth_methods(true).
+t_kafka_bridge_rest_api_ssl(_CtConfig) ->
+    kafka_bridge_rest_api_all_auth_methods(true).
 
 kafka_bridge_rest_api_all_auth_methods(UseSSL) ->
     NormalHostsString =
@@ -184,10 +184,6 @@ kafka_bridge_rest_api_all_auth_methods(UseSSL) ->
             true -> kafka_hosts_string_ssl();
             false -> kafka_hosts_string()
         end,
-    kafka_bridge_rest_api_helper(#{
-        <<"bootstrap_hosts">> => NormalHostsString,
-        <<"authentication">> => <<"none">>
-    }),
     SASLHostsString =
         case UseSSL of
             true -> kafka_hosts_string_ssl_sasl();
@@ -204,6 +200,15 @@ kafka_bridge_rest_api_all_auth_methods(UseSSL) ->
             true -> #{<<"ssl">> => BinifyMap(valid_ssl_settings())};
             false -> #{}
         end,
+    kafka_bridge_rest_api_helper(
+        maps:merge(
+            #{
+                <<"bootstrap_hosts">> => NormalHostsString,
+                <<"authentication">> => <<"none">>
+            },
+            SSLSettings
+        )
+    ),
     kafka_bridge_rest_api_helper(
         maps:merge(
             #{
@@ -311,26 +316,21 @@ kafka_bridge_rest_api_helper(Config) ->
     {ok, 201, _Rule} = http_post(
         ["rules"],
         #{
-            <<"name">> => <<"t_kafka_bridge">>,
+            <<"name">> => <<"kafka_bridge_rest_api_helper_rule">>,
             <<"enable">> => true,
             <<"actions">> => [BridgeID],
             <<"sql">> => <<"SELECT * from \"kafka_bridge_topic/#\"">>
         }
     ),
-    erlang:display({bridge_created, MyKafkaBridgeExists()}),
-    %% Send message to topic and check that it got forwarded to Kafka
+    %% Get offset before sending message
     {ok, Offset} = resolve_kafka_offset(kafka_hosts(), KafkaTopic, 0),
-    erlang:display({offset_before, Offset}),
+    %% Send message to topic and check that it got forwarded to Kafka
     Body = <<"message from EMQX">>,
-    %% Give some time for the bridge and rule to be installed
-    timer:sleep(1000),
-    erlang:display({sending_messagezzzzzzzzzzzzzzzzzzzzzzzz, Config}),
-    PublishRes = emqx:publish(emqx_message:make(<<"kafka_bridge_topic/1">>, Body)),
-    erlang:display({publish_res, PublishRes}),
-    timer:sleep(1000),
-    erlang:display(message_sent_zzzzzzzzzzzzzzzzzzzzzzzz),
+    emqx:publish(emqx_message:make(<<"kafka_bridge_topic/1">>, Body)),
+    %% Give Kafka some time to get message
+    timer:sleep(100),
+    %% Check that Kafka got message
     BrodOut = brod:fetch(kafka_hosts(), KafkaTopic, 0, Offset),
-    erlang:display({brod_fetch_zzzzzzzzzzzzzzzzzzzz, BrodOut}),
     {ok, {_, [KafkaMsg]}} = show(BrodOut),
     Body = KafkaMsg#kafka_message.value,
     %% Perform operations
@@ -358,7 +358,8 @@ publish_with_and_without_ssl(AuthSettings) ->
     publish_helper(#{
         auth_settings => AuthSettings,
         ssl_settings => valid_ssl_settings()
-    }).
+    }),
+    ok.
 
 publish_helper(#{
     auth_settings := AuthSettings,
@@ -403,9 +404,9 @@ publish_helper(#{
     OnQueryRes = ?PRODUCER:on_query(InstId, {send_message, Msg}, State),
     ok = OnQueryRes,
     {ok, {_, [KafkaMsg]}} = brod:fetch(kafka_hosts(), KafkaTopic, 0, Offset),
-    ?assertMatch(#kafka_message{key = bintime}, KafkaMsg),
+    ?assertMatch(#kafka_message{key = BinTime}, KafkaMsg),
     ok = ?PRODUCER:on_stop(InstId, State),
-    % emqx_bridge_resource:remove(InstId),
+    emqx_bridge_resource:remove(InstId),
     ok.
 
 config(Args) ->
