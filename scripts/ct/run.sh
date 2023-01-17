@@ -145,6 +145,9 @@ for dep in ${CT_DEPS}; do
             NEED_ROOT=yes
             FILES+=( '.ci/docker-compose-file/docker-compose-kafka.yaml' )
             ;;
+        clickhouse)
+            FILES+=( '.ci/docker-compose-file/docker-compose-clickhouse.yaml' )
+            ;;
         *)
             echo "unknown_ct_dependency $dep"
             exit 1

@@ -31,6 +31,7 @@ up:
 		-f .ci/docker-compose-file/docker-compose-redis-cluster-tcp.yaml \
 		-f .ci/docker-compose-file/docker-compose-redis-cluster-tls.yaml \
 		-f .ci/docker-compose-file/docker-compose-toxiproxy.yaml \
+		-f .ci/docker-compose-file/docker-compose-clickhouse.yaml \
 		up -d --build --remove-orphans
 
 down:
@@ -48,7 +49,7 @@ down:
 		-f .ci/docker-compose-file/docker-compose-redis-sentinel-tls.yaml \
 		-f .ci/docker-compose-file/docker-compose-redis-cluster-tcp.yaml \
 		-f .ci/docker-compose-file/docker-compose-redis-cluster-tls.yaml \
-		-f .ci/docker-compose-file/docker-compose-toxiproxy.yaml \
+		-f .ci/docker-compose-file/docker-compose-clickhouse.yaml \
 		down --remove-orphans
 
 ct:
