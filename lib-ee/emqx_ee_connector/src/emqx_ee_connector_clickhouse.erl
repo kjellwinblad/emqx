@@ -50,6 +50,13 @@
     default_port => ?CLICKHOUSE_DEFAULT_PORT
 }).
 
+sc(Type, Meta) -> hoconsc:mk(Type, Meta).
+ref(Field) -> hoconsc:ref(?MODULE, Field).
+
+-type url() :: emqx_http_lib:uri_map().
+-reflect_type([url/0]).
+-typerefl_from_string({url/0, emqx_http_lib, uri_parse}).
+
 -type prepares() :: #{atom() => binary()}.
 -type params_tokens() :: #{atom() => list()}.
 
@@ -67,14 +74,22 @@ roots() ->
     [{config, #{type => hoconsc:ref(?MODULE, config)}}].
 
 fields(config) ->
-    [{server, server()}] ++
-        emqx_connector_schema_lib:relational_db_fields() ++
-        emqx_connector_schema_lib:ssl_fields() ++
-        emqx_connector_schema_lib:prepare_statement_fields().
-
-server() ->
-    Meta = #{desc => ?DESC("server")},
-    emqx_schema:servers_sc(Meta, ?CLICKHOUSE_HOST_OPTIONS).
+    [
+        {url,
+            sc(
+                url(),
+                #{
+                    required => true,
+                    validator => fun
+                        (#{query := _Query}) ->
+                            {error, "There must be no query in the url"};
+                        (_) ->
+                            ok
+                    end,
+                    desc => ?DESC("base_url")
+                }
+            )}
+    ] ++ emqx_connector_schema_lib:relational_db_fields().
 
 %% ===================================================================
 callback_mode() -> always_sync.
@@ -83,45 +98,45 @@ callback_mode() -> always_sync.
 on_start(
     InstId,
     #{
-        server := Server,
+        url := URL,
         database := DB,
         username := User,
-        pool_size := PoolSize,
-        ssl := SSL
+        pool_size := PoolSize
     } = Config
 ) ->
-    {Host, Port} = emqx_schema:parse_server(Server, ?CLICKHOUSE_HOST_OPTIONS),
+    erlang:display({
+        starting_clickhouse_server_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    }),
+    % {Host, Port} = emqx_schema:parse_server(Server, ?CLICKHOUSE_HOST_OPTIONS),
     ?SLOG(info, #{
         msg => "starting_clickhouse_connector",
         connector => InstId,
         config => emqx_misc:redact(Config)
     }),
-    SslOpts =
-        case maps:get(enable, SSL) of
-            true ->
-                [
-                    {ssl, required},
-                    {ssl_opts, emqx_tls_lib:to_client_opts(SSL)}
-                ];
-            false ->
-                [{ssl, false}]
-        end,
+    % SslOpts =
+    %     case maps:get(enable, SSL) of
+    %         true ->
+    %             [
+    %                 {ssl, required},
+    %                 {ssl_opts, emqx_tls_lib:to_client_opts(SSL)}
+    %             ];
+    %         false ->
+    %             [{ssl, false}]
+    %     end,
+    PoolName = emqx_plugin_libs_pool:pool_name(InstId),
     Options = [
-        {host, Host},
-        {port, Port},
-        {username, User},
-        {password, emqx_secret:wrap(maps:get(password, Config, ""))},
+        {url, URL},
+        {user, User},
+        {key, emqx_secret:wrap(maps:get(password, Config, "public"))},
         {database, DB},
         {auto_reconnect, ?AUTO_RECONNECT_INTERVAL},
-        {pool_size, PoolSize}
+        {pool_size, PoolSize},
+        {pool, PoolName}
     ],
-    PoolName = emqx_plugin_libs_pool:pool_name(InstId),
-    Prepares = parse_prepare_sql(Config),
-    InitState = #{poolname => PoolName, prepare_statement => #{}},
-    State = maps:merge(InitState, Prepares),
-    case emqx_plugin_libs_pool:start_pool(PoolName, ?MODULE, Options ++ SslOpts) of
+    InitState = #{poolname => PoolName},
+    case emqx_plugin_libs_pool:start_pool(PoolName, ?MODULE, Options) of
         ok ->
-            {ok, init_prepare(State)};
+            {ok, InitState};
         {error, Reason} ->
             ?tp(
                 clickhouse_connector_start_failed,
@@ -245,24 +260,19 @@ on_sql_query(InstId, PoolName, Type, NameOrSQL, Data) ->
     Result.
 
 on_get_status(_InstId, #{poolname := Pool} = State) ->
+    erlang:display({gestssssssssssssssssssssssssssssssssssssssssssssssssssssssss_hej}),
     case emqx_plugin_libs_pool:health_check_ecpool_workers(Pool, fun ?MODULE:do_get_status/1) of
         true ->
-            case do_check_prepares(State) of
-                ok ->
-                    connected;
-                {ok, NState} ->
-                    %% return new state with prepared statements
-                    {connected, NState};
-                false ->
-                    %% do not log error, it is logged in prepare_sql_to_conn
-                    connecting
-            end;
+            connected;
         false ->
             connecting
     end.
 
 do_get_status(Conn) ->
-    ok == element(1, epgsql:squery(Conn, "SELECT count(1) AS T")).
+    erlang:display({gestssssssssssssssssssssssssssssssssssssssssssssssssssssssss_hej2, Conn}),
+    Status = clickhouse:status(Conn),
+    erlang:display({statusssssssssssssssssssssssssssssssssssssssssss, Status}),
+    Status.
 
 do_check_prepares(#{prepare_sql := Prepares}) when is_map(Prepares) ->
     ok;
@@ -279,10 +289,25 @@ do_check_prepares(State = #{poolname := PoolName, prepare_sql := {error, Prepare
 %% ===================================================================
 
 connect(Opts) ->
-    Host = proplists:get_value(host, Opts),
-    Username = proplists:get_value(username, Opts),
-    Password = emqx_secret:unwrap(proplists:get_value(password, Opts)),
-    case epgsql:connect(Host, Username, Password, conn_opts(Opts)) of
+    erlang:display(
+        {connect_yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy_xxxxxxxxxxxxxxxxxxxxxx, Opts}
+    ),
+    URL = iolist_to_binary(emqx_http_lib:normalize(proplists:get_value(url, Opts))),
+    User = proplists:get_value(user, Opts),
+    Database = proplists:get_value(database, Opts),
+    Key = emqx_secret:unwrap(proplists:get_value(key, Opts)),
+    Pool = proplists:get_value(pool, Opts),
+    PoolSize = proplists:get_value(pool_size, Opts),
+    FixedOptions = [
+        {url, URL},
+        {database, Database},
+        {user, User},
+        {key, Key},
+        {pool, Pool}
+    ],
+    erlang:display({FixedOptions}),
+    %% epgsql:connect(Host, Username, Password, conn_opts(Opts))
+    case clickhouse:start_link(FixedOptions) of
         {ok, _Conn} = Ok ->
             Ok;
         {error, Reason} ->

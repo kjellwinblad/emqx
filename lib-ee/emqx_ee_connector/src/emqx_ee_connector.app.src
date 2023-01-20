@@ -8,7 +8,8 @@
         hstreamdb_erl,
         influxdb,
         wolff,
-        brod
+        brod,
+        clickhouse
     ]},
     {env, []},
     {modules, []},

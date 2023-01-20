@@ -23,8 +23,8 @@
 -include_lib("emqx/include/emqx.hrl").
 -include_lib("stdlib/include/assert.hrl").
 
--define(PGSQL_HOST, "pgsql").
--define(PGSQL_RESOURCE_MOD, emqx_connector_pgsql).
+-define(CLICKHOUSE_HOST, "clickhouse").
+-define(CLICKHOUSE_RESOURCE_MOD, emqx_ee_connector_clickhouse).
 
 all() ->
     emqx_common_test_helpers:all(?MODULE).
@@ -33,14 +33,17 @@ groups() ->
     [].
 
 init_per_suite(Config) ->
-    case emqx_common_test_helpers:is_tcp_server_available(?PGSQL_HOST, ?PGSQL_DEFAULT_PORT) of
+    case
+        emqx_common_test_helpers:is_tcp_server_available(?CLICKHOUSE_HOST, ?CLICKHOUSE_DEFAULT_PORT)
+    of
         true ->
             ok = emqx_common_test_helpers:start_apps([emqx_conf]),
             ok = emqx_connector_test_helpers:start_apps([emqx_resource]),
             {ok, _} = application:ensure_all_started(emqx_connector),
+            {ok, _} = application:ensure_all_started(emqx_ee_connector),
             Config;
         false ->
-            {skip, no_pgsql}
+            {skip, no_clickhouse}
     end.
 
 end_per_suite(_Config) ->
@@ -60,13 +63,13 @@ end_per_testcase(_, _Config) ->
 
 t_lifecycle(_Config) ->
     perform_lifecycle_check(
-        <<"emqx_connector_pgsql_SUITE">>,
-        pgsql_config()
+        <<"emqx_connector_clickhouse_SUITE">>,
+        clickhouse_config()
     ).
 
 perform_lifecycle_check(PoolName, InitialConfig) ->
     {ok, #{config := CheckedConfig}} =
-        emqx_resource:check_config(?PGSQL_RESOURCE_MOD, InitialConfig),
+        emqx_resource:check_config(?CLICKHOUSE_RESOURCE_MOD, InitialConfig),
     {ok, #{
         state := #{poolname := ReturnedPoolName} = State,
         status := InitialStatus
@@ -74,7 +77,7 @@ perform_lifecycle_check(PoolName, InitialConfig) ->
         emqx_resource:create_local(
             PoolName,
             ?CONNECTOR_RESOURCE_GROUP,
-            ?PGSQL_RESOURCE_MOD,
+            ?CLICKHOUSE_RESOURCE_MOD,
             CheckedConfig,
             #{}
         ),
@@ -122,20 +125,20 @@ perform_lifecycle_check(PoolName, InitialConfig) ->
 % %% Helpers
 % %%------------------------------------------------------------------------------
 
-pgsql_config() ->
+clickhouse_config() ->
     RawConfig = list_to_binary(
         io_lib:format(
             ""
             "\n"
             "    auto_reconnect = true\n"
             "    database = mqtt\n"
-            "    username= root\n"
+            "    username= default\n"
             "    password = public\n"
             "    pool_size = 8\n"
-            "    server = \"~s:~b\"\n"
+            "    url = \"http://~s:~b\"\n"
             "    "
             "",
-            [?PGSQL_HOST, ?PGSQL_DEFAULT_PORT]
+            [?CLICKHOUSE_HOST, ?CLICKHOUSE_DEFAULT_PORT]
         )
     ),
 
