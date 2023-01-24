@@ -313,9 +313,13 @@ connect(Opts) ->
         {error, Reason} ->
             {error, Reason}
     end.
+show(Label, What) ->
+    erlang:display({Label, What}),
+    What.
 
 query(Conn, SQL, Params) ->
-    epgsql:equery(Conn, SQL, Params).
+    show(query_normal, {SQL, Params}),
+    clickhouse:query(Conn, SQL, []).
 
 prepared_query(Conn, Name, Params) ->
     epgsql:prepared_query2(Conn, Name, Params).

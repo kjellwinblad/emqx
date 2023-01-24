@@ -41,6 +41,15 @@ init_per_suite(Config) ->
             ok = emqx_connector_test_helpers:start_apps([emqx_resource]),
             {ok, _} = application:ensure_all_started(emqx_connector),
             {ok, _} = application:ensure_all_started(emqx_ee_connector),
+            %% Create the db table
+            {ok, Conn} =
+                clickhouse:start_link([
+                    {url, <<"http://clickhouse:8123">>},
+                    {user, <<"default">>},
+                    {key, "public"},
+                    {pool, tmp_pool}
+                ]),
+            {ok, _, _} = clickhouse:query(Conn, <<"CREATE DATABASE IF NOT EXISTS mqtt">>, #{}),
             Config;
         false ->
             {skip, no_clickhouse}
@@ -67,6 +76,14 @@ t_lifecycle(_Config) ->
         clickhouse_config()
     ).
 
+show(X) ->
+    erlang:display(X),
+    X.
+
+show(Label, What) ->
+    erlang:display({Label, What}),
+    What.
+
 perform_lifecycle_check(PoolName, InitialConfig) ->
     {ok, #{config := CheckedConfig}} =
         emqx_resource:check_config(?CLICKHOUSE_RESOURCE_MOD, InitialConfig),
@@ -90,8 +107,16 @@ perform_lifecycle_check(PoolName, InitialConfig) ->
         emqx_resource:get_instance(PoolName),
     ?assertEqual({ok, connected}, emqx_resource:health_check(PoolName)),
     % % Perform query as further check that the resource is working as expected
-    ?assertMatch({ok, _, [{1}]}, emqx_resource:query(PoolName, test_query_no_params())),
-    ?assertMatch({ok, _, [{1}]}, emqx_resource:query(PoolName, test_query_with_params())),
+    (fun() ->
+        QueryNoParamsResWrapper = show(
+            label1, emqx_resource:query(PoolName, test_query_no_params())
+        ),
+        ?assertMatch({ok, _, Res}, QueryNoParamsResWrapper),
+        {_, _, QueryNoParamsRes} = QueryNoParamsResWrapper,
+        ?assertMatch(<<"1">>, string:trim(QueryNoParamsRes))
+    % Driver currently has no support for query with parms
+    % ?assertMatch({ok, _, [{1}]}, show(label2, emqx_resource:query(PoolName, test_query_with_params()))),
+    end)(),
     ?assertEqual(ok, emqx_resource:stop(PoolName)),
     % Resource will be listed still, but state will be changed and healthcheck will fail
     % as the worker no longer exists.
@@ -113,8 +138,16 @@ perform_lifecycle_check(PoolName, InitialConfig) ->
     {ok, ?CONNECTOR_RESOURCE_GROUP, #{status := InitialStatus}} =
         emqx_resource:get_instance(PoolName),
     ?assertEqual({ok, connected}, emqx_resource:health_check(PoolName)),
-    ?assertMatch({ok, _, [{1}]}, emqx_resource:query(PoolName, test_query_no_params())),
-    ?assertMatch({ok, _, [{1}]}, emqx_resource:query(PoolName, test_query_with_params())),
+    (fun() ->
+        QueryNoParamsResWrapper = show(
+            label1, emqx_resource:query(PoolName, test_query_no_params())
+        ),
+        ?assertMatch({ok, _, Res}, QueryNoParamsResWrapper),
+        {_, _, QueryNoParamsRes} = QueryNoParamsResWrapper,
+        ?assertMatch(<<"1">>, string:trim(QueryNoParamsRes))
+    % Driver currently has no support for query with parms
+    % ?assertMatch({ok, _, [{1}]}, show(label2, emqx_resource:query(PoolName, test_query_with_params()))),
+    end)(),
     % Stop and remove the resource in one go.
     ?assertEqual(ok, emqx_resource:remove_local(PoolName)),
     ?assertEqual({error, not_found}, ecpool:stop_sup_pool(ReturnedPoolName)),

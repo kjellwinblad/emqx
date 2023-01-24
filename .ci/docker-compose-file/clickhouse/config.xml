@@ -216,7 +216,7 @@
     <access_control_path>/var/lib/clickhouse/access/</access_control_path>
 
     <!-- Path to configuration file with users, access rights, profiles of settings, quotas. -->
-    <users_config>users.xml</users_config>
+    <users_config>/etc/clickhouse-server/users.xml</users_config>
 
     <!-- Default profile of settings. -->
     <default_profile>default</default_profile>
