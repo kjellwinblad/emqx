@@ -108,14 +108,12 @@ perform_lifecycle_check(PoolName, InitialConfig) ->
     ?assertEqual({ok, connected}, emqx_resource:health_check(PoolName)),
     % % Perform query as further check that the resource is working as expected
     (fun() ->
-        QueryNoParamsResWrapper = show(
-            label1, emqx_resource:query(PoolName, test_query_no_params())
-        ),
-        ?assertMatch({ok, _, Res}, QueryNoParamsResWrapper),
+        QueryNoParamsResWrapper = emqx_resource:query(PoolName, test_query_no_params()),
+        ?assertMatch({ok, _, _}, QueryNoParamsResWrapper),
         {_, _, QueryNoParamsRes} = QueryNoParamsResWrapper,
         ?assertMatch(<<"1">>, string:trim(QueryNoParamsRes))
     % Driver currently has no support for query with parms
-    % ?assertMatch({ok, _, [{1}]}, show(label2, emqx_resource:query(PoolName, test_query_with_params()))),
+    % ?assertMatch({ok, _, [{1}]}, emqx_resource:query(PoolName, test_query_with_params())),
     end)(),
     ?assertEqual(ok, emqx_resource:stop(PoolName)),
     % Resource will be listed still, but state will be changed and healthcheck will fail
@@ -139,14 +137,13 @@ perform_lifecycle_check(PoolName, InitialConfig) ->
         emqx_resource:get_instance(PoolName),
     ?assertEqual({ok, connected}, emqx_resource:health_check(PoolName)),
     (fun() ->
-        QueryNoParamsResWrapper = show(
-            label1, emqx_resource:query(PoolName, test_query_no_params())
-        ),
-        ?assertMatch({ok, _, Res}, QueryNoParamsResWrapper),
+        QueryNoParamsResWrapper =
+            emqx_resource:query(PoolName, test_query_no_params()),
+        ?assertMatch({ok, _, _}, QueryNoParamsResWrapper),
         {_, _, QueryNoParamsRes} = QueryNoParamsResWrapper,
         ?assertMatch(<<"1">>, string:trim(QueryNoParamsRes))
     % Driver currently has no support for query with parms
-    % ?assertMatch({ok, _, [{1}]}, show(label2, emqx_resource:query(PoolName, test_query_with_params()))),
+    % ?assertMatch({ok, _, [{1}]}, label2, emqx_resource:query(PoolName, test_query_with_params())),
     end)(),
     % Stop and remove the resource in one go.
     ?assertEqual(ok, emqx_resource:remove_local(PoolName)),

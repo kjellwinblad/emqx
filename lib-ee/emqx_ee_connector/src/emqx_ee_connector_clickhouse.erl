@@ -40,7 +40,6 @@
 
 -export([
     query/3,
-    prepared_query/3,
     execute_batch/3
 ]).
 
@@ -51,7 +50,6 @@
 }).
 
 sc(Type, Meta) -> hoconsc:mk(Type, Meta).
-ref(Field) -> hoconsc:ref(?MODULE, Field).
 
 -type url() :: emqx_http_lib:uri_map().
 -reflect_type([url/0]).
@@ -104,9 +102,6 @@ on_start(
         pool_size := PoolSize
     } = Config
 ) ->
-    erlang:display({
-        starting_clickhouse_server_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-    }),
     % {Host, Port} = emqx_schema:parse_server(Server, ?CLICKHOUSE_HOST_OPTIONS),
     ?SLOG(info, #{
         msg => "starting_clickhouse_connector",
@@ -174,11 +169,8 @@ clickhouse_query_type(sql) ->
     query;
 clickhouse_query_type(query) ->
     query;
-clickhouse_query_type(prepared_query) ->
-    prepared_query;
-%% for bridge
 clickhouse_query_type(_) ->
-    clickhouse_query_type(prepared_query).
+    clickhouse_query_type(query).
 
 on_batch_query(
     InstId,
@@ -259,8 +251,7 @@ on_sql_query(InstId, PoolName, Type, NameOrSQL, Data) ->
     end,
     Result.
 
-on_get_status(_InstId, #{poolname := Pool} = State) ->
-    erlang:display({gestssssssssssssssssssssssssssssssssssssssssssssssssssssssss_hej}),
+on_get_status(_InstId, #{poolname := Pool} = _State) ->
     case emqx_plugin_libs_pool:health_check_ecpool_workers(Pool, fun ?MODULE:do_get_status/1) of
         true ->
             connected;
@@ -269,29 +260,12 @@ on_get_status(_InstId, #{poolname := Pool} = State) ->
     end.
 
 do_get_status(Conn) ->
-    erlang:display({gestssssssssssssssssssssssssssssssssssssssssssssssssssssssss_hej2, Conn}),
     Status = clickhouse:status(Conn),
-    erlang:display({statusssssssssssssssssssssssssssssssssssssssssss, Status}),
     Status.
-
-do_check_prepares(#{prepare_sql := Prepares}) when is_map(Prepares) ->
-    ok;
-do_check_prepares(State = #{poolname := PoolName, prepare_sql := {error, Prepares}}) ->
-    %% retry to prepare
-    case prepare_sql(Prepares, PoolName) of
-        {ok, Sts} ->
-            %% remove the error
-            {ok, State#{prepare_sql => Prepares, prepare_statement := Sts}};
-        _Error ->
-            false
-    end.
 
 %% ===================================================================
 
 connect(Opts) ->
-    erlang:display(
-        {connect_yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy_xxxxxxxxxxxxxxxxxxxxxx, Opts}
-    ),
     URL = iolist_to_binary(emqx_http_lib:normalize(proplists:get_value(url, Opts))),
     User = proplists:get_value(user, Opts),
     Database = proplists:get_value(database, Opts),
@@ -303,134 +277,49 @@ connect(Opts) ->
         {database, Database},
         {user, User},
         {key, Key},
-        {pool, Pool}
+        {pool, Pool},
+        {pool_size, PoolSize}
     ],
-    erlang:display({FixedOptions}),
-    %% epgsql:connect(Host, Username, Password, conn_opts(Opts))
     case clickhouse:start_link(FixedOptions) of
         {ok, _Conn} = Ok ->
             Ok;
         {error, Reason} ->
             {error, Reason}
     end.
-show(Label, What) ->
-    erlang:display({Label, What}),
-    What.
+
+% show(Label, What) ->
+%     erlang:display({Label, What}),
+%     What.
 
 query(Conn, SQL, Params) ->
-    show(query_normal, {SQL, Params}),
-    clickhouse:query(Conn, SQL, []).
-
-prepared_query(Conn, Name, Params) ->
-    epgsql:prepared_query2(Conn, Name, Params).
+    clickhouse:query(Conn, SQL, Params).
 
 execute_batch(Conn, Statement, Params) ->
     epgsql:execute_batch(Conn, Statement, Params).
 
-conn_opts(Opts) ->
-    conn_opts(Opts, []).
-conn_opts([], Acc) ->
-    Acc;
-conn_opts([Opt = {database, _} | Opts], Acc) ->
-    conn_opts(Opts, [Opt | Acc]);
-conn_opts([{ssl, Bool} | Opts], Acc) when is_boolean(Bool) ->
-    Flag =
-        case Bool of
-            true -> required;
-            false -> false
-        end,
-    conn_opts(Opts, [{ssl, Flag} | Acc]);
-conn_opts([Opt = {port, _} | Opts], Acc) ->
-    conn_opts(Opts, [Opt | Acc]);
-conn_opts([Opt = {timeout, _} | Opts], Acc) ->
-    conn_opts(Opts, [Opt | Acc]);
-conn_opts([Opt = {ssl_opts, _} | Opts], Acc) ->
-    conn_opts(Opts, [Opt | Acc]);
-conn_opts([_Opt | Opts], Acc) ->
-    conn_opts(Opts, Acc).
-
-parse_prepare_sql(Config) ->
-    SQL =
-        case maps:get(prepare_statement, Config, undefined) of
-            undefined ->
-                case maps:get(sql, Config, undefined) of
-                    undefined -> #{};
-                    Template -> #{<<"send_message">> => Template}
-                end;
-            Any ->
-                Any
-        end,
-    parse_prepare_sql(maps:to_list(SQL), #{}, #{}).
-
-parse_prepare_sql([{Key, H} | T], Prepares, Tokens) ->
-    {PrepareSQL, ParamsTokens} = emqx_plugin_libs_rule:preproc_sql(H, '$n'),
-    parse_prepare_sql(
-        T, Prepares#{Key => PrepareSQL}, Tokens#{Key => ParamsTokens}
-    );
-parse_prepare_sql([], Prepares, Tokens) ->
-    #{
-        prepare_sql => Prepares,
-        params_tokens => Tokens
-    }.
-
-init_prepare(State = #{prepare_sql := Prepares, poolname := PoolName}) ->
-    case maps:size(Prepares) of
-        0 ->
-            State;
-        _ ->
-            case prepare_sql(Prepares, PoolName) of
-                {ok, Sts} ->
-                    State#{prepare_statement := Sts};
-                Error ->
-                    LogMeta = #{
-                        msg => <<"Clickhouse init prepare statement failed">>, error => Error
-                    },
-                    ?SLOG(error, LogMeta),
-                    %% mark the prepare_sqlas failed
-                    State#{prepare_sql => {error, Prepares}}
-            end
-    end.
-
-prepare_sql(Prepares, PoolName) when is_map(Prepares) ->
-    prepare_sql(maps:to_list(Prepares), PoolName);
-prepare_sql(Prepares, PoolName) ->
-    case do_prepare_sql(Prepares, PoolName) of
-        {ok, _Sts} = Ok ->
-            %% prepare for reconnect
-            ecpool:add_reconnect_callback(PoolName, {?MODULE, prepare_sql_to_conn, [Prepares]}),
-            Ok;
-        Error ->
-            Error
-    end.
-
-do_prepare_sql(Prepares, PoolName) ->
-    do_prepare_sql(ecpool:workers(PoolName), Prepares, PoolName, #{}).
-
-do_prepare_sql([{_Name, Worker} | T], Prepares, PoolName, _LastSts) ->
-    {ok, Conn} = ecpool_worker:client(Worker),
-    case prepare_sql_to_conn(Conn, Prepares) of
-        {ok, Sts} ->
-            do_prepare_sql(T, Prepares, PoolName, Sts);
-        Error ->
-            Error
-    end;
-do_prepare_sql([], _Prepares, _PoolName, LastSts) ->
-    {ok, LastSts}.
-
-prepare_sql_to_conn(Conn, Prepares) ->
-    prepare_sql_to_conn(Conn, Prepares, #{}).
-
-prepare_sql_to_conn(Conn, [], Statements) when is_pid(Conn) -> {ok, Statements};
-prepare_sql_to_conn(Conn, [{Key, SQL} | PrepareList], Statements) when is_pid(Conn) ->
-    LogMeta = #{msg => "Clickhouse Prepare Statement", name => Key, prepare_sql => SQL},
-    ?SLOG(info, LogMeta),
-    case epgsql:parse2(Conn, Key, SQL, []) of
-        {ok, Statement} ->
-            prepare_sql_to_conn(Conn, PrepareList, Statements#{Key => Statement});
-        {error, Error} = Other ->
-            ?SLOG(error, LogMeta#{msg => "Clickhouse parse failed", error => Error}),
-            Other
-    end.
+%% Do we need this later for ssl?
+%%
+% conn_opts(Opts) ->
+%     conn_opts(Opts, []).
+% conn_opts([], Acc) ->
+%     Acc;
+% conn_opts([Opt = {database, _} | Opts], Acc) ->
+%     conn_opts(Opts, [Opt | Acc]);
+% conn_opts([{ssl, Bool} | Opts], Acc) when is_boolean(Bool) ->
+%     Flag =
+%         case Bool of
+%             true -> required;
+%             false -> false
+%         end,
+%     conn_opts(Opts, [{ssl, Flag} | Acc]);
+% conn_opts([Opt = {port, _} | Opts], Acc) ->
+%     conn_opts(Opts, [Opt | Acc]);
+% conn_opts([Opt = {timeout, _} | Opts], Acc) ->
+%     conn_opts(Opts, [Opt | Acc]);
+% conn_opts([Opt = {ssl_opts, _} | Opts], Acc) ->
+%     conn_opts(Opts, [Opt | Acc]);
+% conn_opts([_Opt | Opts], Acc) ->
+%     conn_opts(Opts, Acc).
 
 to_bin(Bin) when is_binary(Bin) ->
     Bin;

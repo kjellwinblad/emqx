@@ -95,8 +95,7 @@ fields("config") ->
                 }
             )}
     ] ++
-        emqx_ee_connector_clickhouse:fields(config) --
-            emqx_connector_schema_lib:prepare_statement_fields();
+        emqx_ee_connector_clickhouse:fields(config);
 fields("creation_opts") ->
     Opts = emqx_resource_schema:fields("creation_opts"),
     [O || {Field, _} = O <- Opts, not is_hidden_opts(Field)];
