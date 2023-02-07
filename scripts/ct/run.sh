@@ -21,6 +21,9 @@ help() {
     echo "                        otherwise it runs the entire app's CT"
 }
 
+
+echo HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHhhh
+
 WHICH_APP='novalue'
 CONSOLE='no'
 KEEP_UP='no'
@@ -74,6 +77,9 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 
+
+echo HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHhhh
+
 if [ "${WHICH_APP}" = 'novalue' ]; then
     echo "must provide --app arg"
     help
@@ -98,6 +104,10 @@ if [ -f "$DOCKER_CT_ENVS_FILE" ]; then
     CT_DEPS="$(cat "$DOCKER_CT_ENVS_FILE" | xargs)"
 fi
 CT_DEPS="${ERLANG_CONTAINER} ${CT_DEPS:-}"
+
+
+echo HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHhhh
+
 
 FILES=( )
 
@@ -155,6 +165,10 @@ for dep in ${CT_DEPS}; do
     esac
 done
 
+
+
+echo HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHhhh4
+
 F_OPTIONS=""
 
 for file in "${FILES[@]}"; do
@@ -172,6 +186,7 @@ else
     export UID_GID="$ORIG_UID_GID"
 fi
 
+echo HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHhhh5
 # /emqx is where the source dir is mounted to the Erlang container
 # in .ci/docker-compose-file/docker-compose.yaml
 TTY=''
@@ -179,13 +194,17 @@ if [[ -t 1 ]]; then
     TTY='-t'
 fi
 
+
+# sudo chown -R "$ORIG_UID_GID" . >/dev/null 2>&1
 function restore_ownership {
-    if ! sudo chown -R "$ORIG_UID_GID" . >/dev/null 2>&1; then
+    if ! false; then
         docker exec -i $TTY -u root:root "$ERLANG_CONTAINER" bash -c "chown -R $ORIG_UID_GID /emqx" >/dev/null 2>&1 || true
     fi
 }
 
+echo HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHhhh6
 restore_ownership
+echo HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHhhh7
 trap restore_ownership EXIT
 
 
@@ -196,10 +215,12 @@ if [ "$STOP" = 'no' ]; then
     docker-compose $F_OPTIONS up -d --build --remove-orphans
 fi
 
+
+echo HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHhhh
+
 echo "Fixing file owners and permissions for $UID_GID"
 # rebar and hex cache directory need to be writable by $UID
-docker exec -i $TTY -u root:root "$ERLANG_CONTAINER" bash -c "mkdir -p /.cache && chown $UID_GID /.cache && chown -R $UID_GID /emqx/.git /emqx/.ci /emqx/_build/default/lib"
-# need to initialize .erlang.cookie manually here because / is not writable by $UID
+docker exec -i $TTY -u root:root "$ERLANG_CONTAINER" bash -c "mkdir -p /.cache && chown $UID_GID /.cache && chown -R $UID_GID /emqx/.git /emqx/.ci /emqx/_build/default/lib" # need to initialize .erlang.cookie manually here because / is not writable by $UID
 docker exec -i $TTY -u root:root "$ERLANG_CONTAINER" bash -c "openssl rand -base64 16 > /.erlang.cookie && chown $UID_GID /.erlang.cookie && chmod 0400 /.erlang.cookie"
 
 if [ "$ONLY_UP" = 'yes' ]; then

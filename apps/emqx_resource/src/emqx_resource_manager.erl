@@ -147,6 +147,7 @@ create(MgrId, ResId, Group, ResourceType, Config, Opts) ->
             %% buffer, so there is no need for resource workers
             ok;
         false ->
+            erlang:display({herrrrrrrrrrrrrrrrrrrrreeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee}),
             ok = emqx_resource_buffer_worker_sup:start_workers(ResId, Opts),
             case maps:get(start_after_created, Opts, ?START_AFTER_CREATED) of
                 true ->
