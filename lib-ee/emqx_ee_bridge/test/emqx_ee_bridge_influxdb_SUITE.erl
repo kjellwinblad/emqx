@@ -355,6 +355,7 @@ create_bridge(Config, Overrides) ->
     Name = ?config(influxdb_name, Config),
     InfluxDBConfig0 = ?config(influxdb_config, Config),
     InfluxDBConfig = emqx_map_lib:deep_merge(InfluxDBConfig0, Overrides),
+    erlang:display({xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx, Type, Name, InfluxDBConfig}),
     emqx_bridge:create(Type, Name, InfluxDBConfig).
 
 delete_bridge(Config) ->

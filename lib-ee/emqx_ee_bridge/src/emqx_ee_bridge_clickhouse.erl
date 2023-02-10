@@ -34,7 +34,7 @@ conn_bridge_examples(Method) ->
         #{
             <<"clickhouse">> => #{
                 summary => <<"Clickhouse Bridge">>,
-                value => values("clickhouse", Method)
+                value => values(Method, "clickhouse")
             }
         }
     ].

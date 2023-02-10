@@ -192,6 +192,7 @@ filter_top_level_handlers(Handlers) ->
 
 handle_update_request(SchemaModule, ConfKeyPath, Handlers, UpdateArgs) ->
     try
+        erlang:display({aaaaaaaaaaaaaaaaaaaa, do_handle_update_request, SchemaModule}),
         do_handle_update_request(SchemaModule, ConfKeyPath, Handlers, UpdateArgs)
     catch
         throw:Reason ->

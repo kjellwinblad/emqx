@@ -23,14 +23,30 @@
 -include_lib("emqx/include/emqx.hrl").
 -include_lib("stdlib/include/assert.hrl").
 
--define(CLICKHOUSE_HOST, "clickhouse").
+-define(CLICKHOUSE_HOST, "localhost").
 -define(CLICKHOUSE_RESOURCE_MOD, emqx_ee_connector_clickhouse).
+
+%% This test SUITE requires a running clickhouse instance. If you don't want to
+%% bring up the whole CI infrastuctucture with the `scripts/ct/run.sh` script
+%% you can create a clickhouse instance with the following command (execute it
+%% from root of the EMQX directory.). You also need to set ?CLICKHOUSE_HOST and
+%% ?CLICKHOUSE_PORT to appropriate values.
+%%
+%% docker run -d -p 18123:8123 -p19000:9000 --name some-clickhouse-server --ulimit nofile=262144:262144 -v "`pwd`/.ci/docker-compose-file/clickhouse/users.xml:/etc/clickhouse-server/users.xml" -v "`pwd`/.ci/docker-compose-file/clickhouse/config.xml:/etc/clickhouse-server/config.xml" clickhouse/clickhouse-server
 
 all() ->
     emqx_common_test_helpers:all(?MODULE).
 
 groups() ->
     [].
+
+clickhouse_url() ->
+    erlang:iolist_to_binary([
+        <<"http://">>,
+        ?CLICKHOUSE_HOST,
+        ":",
+        erlang:integer_to_list(?CLICKHOUSE_DEFAULT_PORT)
+    ]).
 
 init_per_suite(Config) ->
     case
@@ -44,7 +60,7 @@ init_per_suite(Config) ->
             %% Create the db table
             {ok, Conn} =
                 clickhouse:start_link([
-                    {url, <<"http://clickhouse:8123">>},
+                    {url, clickhouse_url()},
                     {user, <<"default">>},
                     {key, "public"},
                     {pool, tmp_pool}
@@ -109,8 +125,8 @@ perform_lifecycle_check(PoolName, InitialConfig) ->
     % % Perform query as further check that the resource is working as expected
     (fun() ->
         QueryNoParamsResWrapper = emqx_resource:query(PoolName, test_query_no_params()),
-        ?assertMatch({ok, _, _}, QueryNoParamsResWrapper),
-        {_, _, QueryNoParamsRes} = QueryNoParamsResWrapper,
+        ?assertMatch({ok, _}, QueryNoParamsResWrapper),
+        {_, QueryNoParamsRes} = QueryNoParamsResWrapper,
         ?assertMatch(<<"1">>, string:trim(QueryNoParamsRes))
     % Driver currently has no support for query with parms
     % ?assertMatch({ok, _, [{1}]}, emqx_resource:query(PoolName, test_query_with_params())),
@@ -139,8 +155,8 @@ perform_lifecycle_check(PoolName, InitialConfig) ->
     (fun() ->
         QueryNoParamsResWrapper =
             emqx_resource:query(PoolName, test_query_no_params()),
-        ?assertMatch({ok, _, _}, QueryNoParamsResWrapper),
-        {_, _, QueryNoParamsRes} = QueryNoParamsResWrapper,
+        ?assertMatch({ok, _}, QueryNoParamsResWrapper),
+        {_, QueryNoParamsRes} = QueryNoParamsResWrapper,
         ?assertMatch(<<"1">>, string:trim(QueryNoParamsRes))
     % Driver currently has no support for query with parms
     % ?assertMatch({ok, _, [{1}]}, label2, emqx_resource:query(PoolName, test_query_with_params())),

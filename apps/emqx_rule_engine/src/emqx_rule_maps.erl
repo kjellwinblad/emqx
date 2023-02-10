@@ -31,10 +31,15 @@
 nested_get(Key, Data) ->
     nested_get(Key, Data, undefined).
 
+show(X) ->
+    erlang:display(X),
+    X.
+
 nested_get({var, ?PH_VAR_THIS}, Data, _Default) ->
     Data;
 nested_get({var, Key}, Data, Default) ->
-    general_map_get({key, Key}, Data, Data, Default);
+    erlang:display({ntested_get, {var, Key}, Data, Default}),
+    show(general_map_get({key, Key}, Data, Data, Default));
 nested_get({path, Path}, Data, Default) when is_list(Path) ->
     do_nested_get(Path, Data, Data, Default).
 

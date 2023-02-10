@@ -102,6 +102,7 @@ sync_query(Id, Request, Opts0) ->
     PickKey = maps:get(pick_key, Opts, self()),
     Timeout = maps:get(timeout, Opts),
     emqx_resource_metrics:matched_inc(Id),
+    erlang:display({sync_query}),
     pick_call(Id, PickKey, {query, Request, Opts}, Timeout).
 
 -spec async_query(id(), request(), query_opts()) -> Result :: term().
@@ -289,6 +290,7 @@ pick_call(Id, Key, Query, Timeout) ->
         receive
             {MRef, Response} ->
                 erlang:demonitor(MRef, [flush]),
+                erlang:display({rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr, Response}),
                 Response;
             {'DOWN', MRef, process, Pid, Reason} ->
                 error({worker_down, Reason})
@@ -298,6 +300,7 @@ pick_call(Id, Key, Query, Timeout) ->
                 {MRef, Response} ->
                     Response
             after 0 ->
+                erlang:display({timeout_here}),
                 error(timeout)
             end
         end
@@ -409,6 +412,7 @@ retry_inflight_sync(Ref, QueryOrBatch, Data0) ->
 -spec handle_query_requests(?SEND_REQ(request_from(), request()), data()) ->
     gen_statem:event_handler_result(state(), data()).
 handle_query_requests(Request0, Data0) ->
+    erlang:display({handle_query_requests, Request0, Data0}),
     Data = collect_and_enqueue_query_requests(Request0, Data0),
     maybe_flush(Data).
 

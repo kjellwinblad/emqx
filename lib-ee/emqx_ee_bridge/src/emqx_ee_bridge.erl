@@ -54,6 +54,7 @@ examples(Method) ->
         end,
     Fun =
         fun(Module, Examples) ->
+            erlang:display({Module, conn_bridge_examples, [Method]}),
             ConnectorExamples = erlang:apply(Module, conn_bridge_examples, [Method]),
             lists:foldl(MergeFun, Examples, ConnectorExamples)
         end,
@@ -75,7 +76,7 @@ resource_type(redis_cluster) -> emqx_ee_connector_redis;
 resource_type(pgsql) -> emqx_connector_pgsql;
 resource_type(timescale) -> emqx_connector_pgsql;
 resource_type(matrix) -> emqx_connector_pgsql;
-resource_type(clickhouse) -> emqx_connector_clickhouse.
+resource_type(clickhouse) -> emqx_ee_connector_clickhouse.
 
 fields(bridges) ->
     [

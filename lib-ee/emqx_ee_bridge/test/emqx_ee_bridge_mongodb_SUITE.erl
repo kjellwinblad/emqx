@@ -214,9 +214,11 @@ create_bridge(Config, Overrides) ->
     MongoConfig0 = ?config(mongo_config, Config),
     MongoConfig = emqx_map_lib:deep_merge(MongoConfig0, Overrides),
     ct:pal("creating ~p bridge with config:\n ~p", [Type, MongoConfig]),
+    erlang:display({create_type_name, Type, Name}),
     emqx_bridge:create(Type, Name, MongoConfig).
 
 delete_bridge(Config) ->
+    erlang:display({?config(mongo_type, Config)}),
     Type = mongo_type_bin(?config(mongo_type, Config)),
     Name = ?config(mongo_name, Config),
     emqx_bridge:remove(Type, Name).
@@ -253,6 +255,7 @@ send_message(Config, Payload) ->
     Name = ?config(mongo_name, Config),
     Type = mongo_type_bin(?config(mongo_type, Config)),
     BridgeID = emqx_bridge_resource:bridge_id(Type, Name),
+    erlang:display({bridge_id, BridgeID, emqx_bridge:list()}),
     emqx_bridge:send_message(BridgeID, Payload).
 
 %%------------------------------------------------------------------------------

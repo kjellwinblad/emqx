@@ -233,13 +233,14 @@ support_check_schema(_) ->
 
 parse_spec_ref(Module, Path, Options) ->
     Schema =
-        try
-            erlang:apply(Module, schema, [Path])
-            %% better error message
-        catch
-            error:Reason ->
-                throw({error, #{mfa => {Module, schema, [Path]}, reason => Reason}})
-        end,
+        % try
+        erlang:apply(Module, schema, [Path]),
+    %% better error message
+    % catch
+    %     error:Reason ->
+    %         throw({error, #{mfa => {Module, schema, [Path]}, reason => Reason}})
+    % end
+
     {Specs, Refs} = maps:fold(
         fun(Method, Meta, {Acc, RefsAcc}) ->
             (not lists:member(Method, ?METHODS)) andalso

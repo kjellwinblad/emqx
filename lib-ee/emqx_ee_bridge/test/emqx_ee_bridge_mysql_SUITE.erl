@@ -40,6 +40,7 @@ all() ->
     ].
 
 groups() ->
+    erlang:display({groups}),
     TCs = emqx_common_test_helpers:all(?MODULE),
     NonBatchCases = [t_write_timeout, t_uninitialized_prepared_statement],
     [
@@ -56,6 +57,7 @@ groups() ->
     ].
 
 init_per_group(tcp, Config) ->
+    erlang:display({init_per_group}),
     MysqlHost = os:getenv("MYSQL_TCP_HOST", "toxiproxy"),
     MysqlPort = list_to_integer(os:getenv("MYSQL_TCP_PORT", "3306")),
     [
@@ -67,6 +69,7 @@ init_per_group(tcp, Config) ->
         | Config
     ];
 init_per_group(tls, Config) ->
+    erlang:display({init_per_group_tls}),
     MysqlHost = os:getenv("MYSQL_TLS_HOST", "toxiproxy"),
     MysqlPort = list_to_integer(os:getenv("MYSQL_TLS_PORT", "3307")),
     [
@@ -96,9 +99,11 @@ end_per_group(_Group, _Config) ->
     ok.
 
 init_per_suite(Config) ->
+    erlang:display({init_per_suite, Config}),
     Config.
 
 end_per_suite(_Config) ->
+    erlang:display({end_per_suite, _Config}),
     emqx_mgmt_api_test_util:end_suite(),
     ok = emqx_common_test_helpers:stop_apps([emqx_bridge, emqx_conf]),
     ok.
@@ -122,20 +127,24 @@ end_per_testcase(_Testcase, Config) ->
 %%------------------------------------------------------------------------------
 
 common_init(Config0) ->
+    erlang:display({common_init}),
     BridgeType = <<"mysql">>,
     MysqlHost = ?config(mysql_host, Config0),
     MysqlPort = ?config(mysql_port, Config0),
     case emqx_common_test_helpers:is_tcp_server_available(MysqlHost, MysqlPort) of
         true ->
+            erlang:display({my_sql_up}),
             % Setup toxiproxy
             ProxyHost = os:getenv("PROXY_HOST", "toxiproxy"),
             ProxyPort = list_to_integer(os:getenv("PROXY_PORT", "8474")),
             emqx_common_test_helpers:reset_proxy(ProxyHost, ProxyPort),
             % Ensure EE bridge module is loaded
             _ = application:load(emqx_ee_bridge),
+            erlang:display({what}),
             _ = emqx_ee_bridge:module_info(),
             ok = emqx_common_test_helpers:start_apps([emqx_conf, emqx_bridge]),
             emqx_mgmt_api_test_util:init_suite(),
+            erlang:display({what2}),
             % Connect to mysql directly and create the table
             connect_and_create_table(Config0),
             {Name, MysqlConfig} = mysql_config(BridgeType, Config0),
