@@ -13,10 +13,10 @@
 
 sql_for_bridge() ->
     "INSERT INTO mqtt_test(payload, arrived) "
-    "VALUES ('${payload}', FROM_UNIXTIME(${timestamp}))".
+    "VALUES ('${payload}', ${timestamp})".
 
 sql_create_table() ->
-    "CREATE TABLE IF NOT EXISTS mqtt.mqtt_test (payload String, arrived datetime NOT NULL) ENGINE = Memory".
+    "CREATE TABLE IF NOT EXISTS mqtt.mqtt_test (payload String, arrived BIGINT) ENGINE = Memory".
 
 clickhouse_url() ->
     erlang:iolist_to_binary([
@@ -83,13 +83,14 @@ end_per_suite(_Config) ->
 all() ->
     [
         create_delete_bridge,
-        send
+        send,
+        send_batch
     ].
 
 clickhouse_config(Config) ->
-    BatchSize = proplists:get_value(batch_size, Config, 1),
-    QueryMode = proplists:get_value(query_mode, Config, sync),
-    UseTLS = proplists:get_value(use_tls, Config, false),
+    BatchSize = maps:get(batch_size, Config, 1),
+    QueryMode = maps:get(query_mode, Config, sync),
+    UseTLS = maps:get(use_tls, Config, false),
     Name = atom_to_binary(?MODULE),
     URL = clickhouse_url(),
     ConfigString =
@@ -101,15 +102,15 @@ clickhouse_config(Config) ->
             "  sql = \"~s\"\n"
             "  resource_opts = {\n"
             "    query_mode = ~s\n"
-            % "    batch_size = ~b\n"
+            "    batch_size = ~b\n"
             "  }\n"
             "}\n",
             [
                 Name,
                 URL,
                 sql_for_bridge(),
-                QueryMode
-                % BatchSize
+                QueryMode,
+                BatchSize
             ]
         ),
     parse_and_check(ConfigString, <<"clickhouse">>, Name).
@@ -127,7 +128,7 @@ create_delete_bridge(_Config) ->
     {ok, _} = emqx_bridge:create(
         Type,
         Name,
-        clickhouse_config([])
+        clickhouse_config(#{})
     ),
     {ok, _} = emqx_bridge:remove(Type, Name),
     ok.
@@ -163,12 +164,47 @@ send(_Config) ->
     {ok, X} = emqx_bridge:create(
         Type,
         Name,
-        clickhouse_config([])
+        clickhouse_config(#{})
     ),
     BridgeID = show(emqx_bridge_resource:bridge_id(Type, Name)),
     % emqx_bridge
     Payload = #{payload => <<"clickhouse_data">>, timestamp => 10000},
     show(listing, emqx_bridge:list()),
+    ok = show(message_eeeeeeeeeeeeeeeeeeeeeeeeee, emqx_bridge:send_message(BridgeID, Payload)),
+    {ok, _} = emqx_bridge:remove(Type, Name),
+    ok.
+
+send_batch(_Config) ->
+    % erlang:display({logger:get_handler_config()}),
+    % logger:set_application_level(emqx_ee_connector, debug),
+    % logger:set_application_level(emqx_ee_bridge, debug),
+    % logger:add_handler(my_handler_id, logger_std_h, #{}),
+    % application:set_env(kernel, logger_level, debug),
+    % application:set_env(kernel, logger,
+    %                     [
+    %                      %% Console logger
+    %                      {handler, default, logger_std_h,
+    %                       #{formatter => {flatlog, #{
+    %                                                  map_depth => 3,
+    %                                                  term_depth => 50
+    %                                                 }}}
+    %                      }]),
+    Type = <<"clickhouse">>,
+    Name = atom_to_binary(?MODULE),
+    erlang:display({
+        before_create_wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww
+    }),
+    {ok, X} = emqx_bridge:create(
+        Type,
+        Name,
+        clickhouse_config(#{batch_size => 10})
+    ),
+    BridgeID = show(emqx_bridge_resource:bridge_id(Type, Name)),
+    % emqx_bridge
+    Payload = #{payload => <<"clickhouse_data">>, timestamp => 10000},
+    show(listing, emqx_bridge:list()),
+    ok = show(message_eeeeeeeeeeeeeeeeeeeeeeeeee, emqx_bridge:send_message(BridgeID, Payload)),
+    ok = show(message_eeeeeeeeeeeeeeeeeeeeeeeeee, emqx_bridge:send_message(BridgeID, Payload)),
     ok = show(message_eeeeeeeeeeeeeeeeeeeeeeeeee, emqx_bridge:send_message(BridgeID, Payload)),
     {ok, _} = emqx_bridge:remove(Type, Name),
     ok.

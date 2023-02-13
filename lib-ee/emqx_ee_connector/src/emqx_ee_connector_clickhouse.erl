@@ -158,24 +158,11 @@ on_start(
         pool_size := PoolSize
     } = Config
 ) ->
-    show(on_starttttttttttttttttttttttttttttttttttt, Config),
-    %%erlang:halt(),
-    % {Host, Port} = emqx_schema:parse_server(Server, ?CLICKHOUSE_HOST_OPTIONS),
     ?SLOG(info, #{
         msg => "starting_clickhouse_connector",
         connector => InstId,
         config => emqx_misc:redact(Config)
     }),
-    % SslOpts =
-    %     case maps:get(enable, SSL) of
-    %         true ->
-    %             [
-    %                 {ssl, required},
-    %                 {ssl_opts, emqx_tls_lib:to_client_opts(SSL)}
-    %             ];
-    %         false ->
-    %             [{ssl, false}]
-    %     end,
     PoolName = emqx_plugin_libs_pool:pool_name(InstId),
     Options = [
         {url, URL},
@@ -187,17 +174,34 @@ on_start(
         {pool, PoolName}
     ],
     InitState = #{poolname => PoolName},
-    PreparedSQL = prepare_sql(Config),
-    State = maps:merge(InitState, PreparedSQL),
-    case emqx_plugin_libs_pool:start_pool(PoolName, ?MODULE, Options) of
-        ok ->
-            {ok, State};
-        {error, Reason} ->
-            ?tp(
-                clickhouse_connector_start_failed,
-                #{error => Reason}
-            ),
-            {error, Reason}
+    try
+        PreparedSQL = prepare_sql(Config),
+        State = maps:merge(InitState, PreparedSQL),
+        case emqx_plugin_libs_pool:start_pool(PoolName, ?MODULE, Options) of
+            ok ->
+                {ok, State};
+            {error, Reason} ->
+                ?SLOG(info, #{
+                    msg => "clickhouse_connector_start_failed",
+                    error_reason => Reason,
+                    config => emqx_misc:redact(Config)
+                }),
+                ?tp(
+                    clickhouse_connector_start_failed,
+                    #{error => Reason}
+                ),
+                {error, Reason}
+        end
+    catch
+        ErrorType:CatchReason:Stack ->
+            ?SLOG(info, #{
+                msg => "clickhouse_connector_start_failed",
+                error_type => ErrorType,
+                error_reason => CatchReason,
+                error_stack => Stack,
+                config => emqx_misc:redact(Config)
+            }),
+            {error, CatchReason}
     end.
 
 on_stop(InstId, #{poolname := PoolName}) ->
@@ -247,109 +251,48 @@ on_batch_query(
     BatchReq,
     State
 ) ->
-    try
-        erlang:error(hej)
-    catch
-        _X:_Y:Z ->
-            erlang:display({stacktrace, Z})
-    end,
-    erlang:display({on_batch_query, InstId, BatchReq, State}),
-    ok.
-% case BatchReq of
-%     [{Key, _} = Request | _] ->
-%         BinKey = to_bin(Key),
-%         case maps:get(BinKey, Tokens, undefined) of
-%             undefined ->
-%                 Log = #{
-%                     connector => InstId,
-%                     first_request => Request,
-%                     state => State,
-%                     msg => "batch prepare not implemented"
-%                 },
-%                 ?SLOG(error, Log),
-%                 {error, batch_prepare_not_implemented};
-%             TokenList ->
-%                 {_, Datas} = lists:unzip(BatchReq),
-%                 Datas2 = [emqx_plugin_libs_rule:proc_sql(TokenList, Data) || Data <- Datas],
-%                 St = maps:get(BinKey, Sts),
-%                 {_Column, Results} = on_sql_query(InstId, PoolName, execute_batch, St, Datas2),
-%                 %% this local function only suits for the result of batch insert
-%                 TransResult = fun
-%                     Trans([{ok, Count} | T], Acc) ->
-%                         Trans(T, Acc + Count);
-%                     Trans([{error, _} = Error | _], _Acc) ->
-%                         Error;
-%                     Trans([], Acc) ->
-%                         {ok, Acc}
-%                 end,
-
-%                 TransResult(Results, 0)
-%         end;
-%     _ ->
-%         Log = #{
-%             connector => InstId,
-%             request => BatchReq,
-%             state => State,
-%             msg => "invalid request"
-%         },
-%         ?SLOG(error, Log),
-%         {error, invalid_request}
-% end.
-% case BatchReq of
-%     [{Key, _} = Request | _] ->
-%         BinKey = to_bin(Key),
-%         case maps:get(BinKey, Tokens, undefined) of
-%             undefined ->
-%                 Log = #{
-%                     connector => InstId,
-%                     first_request => Request,
-%                     state => State,
-%                     msg => "batch prepare not implemented"
-%                 },
-%                 ?SLOG(error, Log),
-%                 {error, batch_prepare_not_implemented};
-%             TokenList ->
-%                 {_, Datas} = lists:unzip(BatchReq),
-%                 Datas2 = [emqx_plugin_libs_rule:proc_sql(TokenList, Data) || Data <- Datas],
-%                 St = maps:get(BinKey, Sts),
-%                 {_Column, Results} = on_sql_query(InstId, PoolName, execute_batch, St, Datas2),
-%                 %% this local function only suits for the result of batch insert
-%                 TransResult = fun
-%                     Trans([{ok, Count} | T], Acc) ->
-%                         Trans(T, Acc + Count);
-%                     Trans([{error, _} = Error | _], _Acc) ->
-%                         Error;
-%                     Trans([], Acc) ->
-%                         {ok, Acc}
-%                 end,
-
-%                 TransResult(Results, 0)
-%         end;
-%     _ ->
-%         Log = #{
-%             connector => InstId,
-%             request => BatchReq,
-%             state => State,
-%             msg => "invalid request"
-%         },
-%         ?SLOG(error, Log),
-%         {error, invalid_request}
-% end.
-
-proc_sql_params(query, SQLOrKey, Params, _State) ->
-    {SQLOrKey, Params};
-% proc_sql_params(prepared_query, SQLOrKey, Params, _State) ->
-%     {SQLOrKey, Params};
-proc_sql_params(TypeOrKey, Data, Params, #{params_tokens := ParamsTokens} = State) ->
-    Key = to_bin(TypeOrKey),
-    case maps:get(Key, show(parms_tokens, ParamsTokens), undefined) of
-        undefined ->
-            show(wait_what),
-            {Data, Params};
-        Tokens ->
-            SQL = show(my_sql, maps:get(Key, maps:get(prepare_sql, State, #{}), no_sql)),
-            {SQL, emqx_plugin_libs_rule:proc_sql(show(Tokens), show(Data))}
+    %% Currently we only support batch requests with the send_message key
+    {Keys, ObjectsToInsert} = lists:unzip(BatchReq),
+    case is_all_keys_send_message(Keys) of
+        true ->
+            do_batch_insert(InstId, ObjectsToInsert, State);
+        false ->
+            Log = #{
+                connector => InstId,
+                request => BatchReq,
+                state => State,
+                msg => "invalid request"
+            },
+            ?SLOG(error, Log),
+            {error, invalid_request}
     end.
+
+is_send_message_atom(send_message) ->
+    true;
+is_send_message_atom(_) ->
+    false.
+
+is_all_keys_send_message(Keys) ->
+    lists:all(fun is_send_message_atom/1, Keys).
+
+do_batch_insert(
+    InstId,
+    [FirstObject | RemainingObjects] = _ObjectsToInsert,
+    #{
+        send_message_template := InsertTemplate,
+        extend_send_message_template := BulkExtendInsertTemplate,
+        poolname := PoolName
+    }
+) ->
+    %% Prepare INSERT-statement and the first row after VALUES
+    InsertStatementHead = emqx_plugin_libs_rule:proc_tmpl(InsertTemplate, FirstObject),
+    FormatObjectData =
+        fun(Object) ->
+            emqx_plugin_libs_rule:proc_tmpl(BulkExtendInsertTemplate, Object)
+        end,
+    InsertStatementTail = lists:map(FormatObjectData, RemainingObjects),
+    CompleteStatement = erlang:iolist_to_binary([InsertStatementHead, InsertStatementTail]),
+    on_sql_query(InstId, PoolName, send_message, CompleteStatement).
 
 on_sql_query(InstId, PoolName, Type, SQL) ->
     Result = ecpool:pick_and_do(PoolName, {?MODULE, Type, [SQL]}, no_handover),
@@ -432,29 +375,6 @@ send_message(Conn, Statement) ->
         Error ->
             {error, Error}
     end.
-%% Do we need this later for ssl?
-%%
-% conn_opts(Opts) ->
-%     conn_opts(Opts, []).
-% conn_opts([], Acc) ->
-%     Acc;
-% conn_opts([Opt = {database, _} | Opts], Acc) ->
-%     conn_opts(Opts, [Opt | Acc]);
-% conn_opts([{ssl, Bool} | Opts], Acc) when is_boolean(Bool) ->
-%     Flag =
-%         case Bool of
-%             true -> required;
-%             false -> false
-%         end,
-%     conn_opts(Opts, [{ssl, Flag} | Acc]);
-% conn_opts([Opt = {port, _} | Opts], Acc) ->
-%     conn_opts(Opts, [Opt | Acc]);
-% conn_opts([Opt = {timeout, _} | Opts], Acc) ->
-%     conn_opts(Opts, [Opt | Acc]);
-% conn_opts([Opt = {ssl_opts, _} | Opts], Acc) ->
-%     conn_opts(Opts, [Opt | Acc]);
-% conn_opts([_Opt | Opts], Acc) ->
-%     conn_opts(Opts, Acc).
 
 to_bin(Bin) when is_binary(Bin) ->
     Bin;
@@ -466,32 +386,29 @@ prepare_sql(Config) ->
         undefined ->
             #{};
         Template ->
-            #{
-                send_message =>
-                    emqx_plugin_libs_rule:preproc_tmpl(Template)
-            }
+            prepare_sql_string(Template)
     end.
 
-% parse_prepare_sql(Config) ->
-%     SQL =
-%         case maps:get(prepare_statement, Config, undefined) of
-%             undefined ->
-%                 case maps:get(sql, Config, undefined) of
-%                     undefined -> #{};
-%                     Template -> #{<<"send_message">> => Template}
-%                 end;
-%             Any ->
-%                 Any
-%         end,
-%     parse_prepare_sql(maps:to_list(SQL), #{}, #{}).
+prepare_sql_string(Template) ->
+    InsertTemplate =
+        emqx_plugin_libs_rule:preproc_tmpl(Template),
+    BulkExtendInsertTemplate =
+        prepare_sql_bulk_extend_insert_template(Template),
+    #{
+        send_message_template => InsertTemplate,
+        extend_send_message_template => BulkExtendInsertTemplate
+    }.
 
-% parse_prepare_sql([{Key, H} | T], Prepares, Tokens) ->
-%     {PrepareSQL, ParamsTokens} = emqx_plugin_libs_rule:preproc_sql(H, '$n'),
-%     parse_prepare_sql(
-%         T, Prepares#{Key => PrepareSQL}, Tokens#{Key => ParamsTokens}
-%     );
-% parse_prepare_sql([], Prepares, Tokens) ->
-%     #{
-%         prepare_sql => Prepares,
-%         params_tokens => Tokens
-%     }.
+prepare_sql_bulk_extend_insert_template(Template) ->
+    case emqx_plugin_libs_rule:split_insert_sql(Template) of
+        {ok, {_, ValuesTemplate}} ->
+            %% The part after VALUES have been extracted
+            %% Add , before ParamTemplate so that one can append it
+            %% to an insert template
+            ExtendParamTemplate = erlang:iolist_to_binary([", ", ValuesTemplate]),
+            emqx_plugin_libs_rule:preproc_tmpl(ExtendParamTemplate);
+        {error, not_insert_sql} ->
+            erlang:error(
+                <<"The SQL template should be an SQL INSERT statement but it is something else.">>
+            )
+    end.

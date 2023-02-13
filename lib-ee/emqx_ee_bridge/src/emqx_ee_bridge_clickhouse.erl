@@ -22,8 +22,8 @@
 ]).
 
 -define(DEFAULT_SQL, <<
-    "insert into t_mqtt_msg(msgid, topic, qos, payload, arrived) "
-    "values (${id}, ${topic}, ${qos}, ${payload}, TO_TIMESTAMP((${timestamp} :: bigint)/1000))"
+    "insert into t_mqtt_msg(msgid, topic, qos, payload, arrived) FORMAT JSONCompactEachRow "
+    "values [${id}, ${topic}, ${qos}, ${payload}, ${timestamp}]"
 >>).
 
 %% -------------------------------------------------------------------------------------------------
