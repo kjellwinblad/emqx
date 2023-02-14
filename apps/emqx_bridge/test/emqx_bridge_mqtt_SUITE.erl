@@ -129,7 +129,6 @@ suite() ->
 
 init_per_suite(Config) ->
     _ = application:load(emqx_conf),
-    snabbkaffe:fix_ct_logging(),
     %% some testcases (may from other app) already get emqx_connector started
     _ = application:stop(emqx_resource),
     _ = application:stop(emqx_connector),

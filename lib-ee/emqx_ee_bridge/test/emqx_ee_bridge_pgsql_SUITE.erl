@@ -220,20 +220,11 @@ parse_and_check(ConfigString, BridgeType, Name) ->
     #{<<"bridges">> := #{BridgeType := #{Name := Config}}} = RawConf,
     Config.
 
-show(X) ->
-    erlang:display(X),
-    X.
-
-show(Label, What) ->
-    erlang:display({Label, What}),
-    What.
-
 create_bridge(Config) ->
     BridgeType = ?config(pgsql_bridge_type, Config),
     Name = ?config(pgsql_name, Config),
     PGConfig = ?config(pgsql_config, Config),
-    show(xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx),
-    emqx_bridge:create(show(type, BridgeType), show(name, Name), show(pg_config, PGConfig)).
+    emqx_bridge:create(BridgeType, Name, PGConfig).
 
 delete_bridge(Config) ->
     BridgeType = ?config(pgsql_bridge_type, Config),

@@ -21,13 +21,15 @@
     desc/1
 ]).
 
--define(DEFAULT_SQL, <<
-    "insert into t_mqtt_msg(msgid, topic, qos, payload, arrived) FORMAT JSONCompactEachRow "
-    "values [${id}, ${topic}, ${qos}, ${payload}, ${timestamp}]"
->>).
+-define(DEFAULT_SQL,
+    <<"INSERT INTO mqtt_test(payload, arrived) VALUES ('${payload}', ${timestamp})">>
+).
+
+-define(DEFAULT_BATCH_VALUE_SEPARATOR, <<", ">>).
 
 %% -------------------------------------------------------------------------------------------------
-%% api
+%% Callback used by HTTP API
+%% -------------------------------------------------------------------------------------------------
 
 conn_bridge_examples(Method) ->
     [
@@ -52,6 +54,7 @@ values(post, Type) ->
         username => <<"default">>,
         password => <<"public">>,
         sql => ?DEFAULT_SQL,
+        batch_value_separator => ?DEFAULT_BATCH_VALUE_SEPARATOR,
         local_topic => <<"local/topic/#">>,
         resource_opts => #{
             worker_pool_size => 8,
@@ -68,6 +71,8 @@ values(put, Type) ->
 
 %% -------------------------------------------------------------------------------------------------
 %% Hocon Schema Definitions
+%% -------------------------------------------------------------------------------------------------
+
 namespace() -> "bridge_clickhouse".
 
 roots() -> [].
@@ -79,6 +84,11 @@ fields("config") ->
             mk(
                 binary(),
                 #{desc => ?DESC("sql_template"), default => ?DEFAULT_SQL, format => <<"sql">>}
+            )},
+        {batch_value_separator,
+            mk(
+                binary(),
+                #{desc => ?DESC("batch_value_separator"), default => ?DEFAULT_BATCH_VALUE_SEPARATOR}
             )},
         {local_topic,
             mk(
@@ -104,9 +114,7 @@ fields("post") ->
 fields("put") ->
     fields("config");
 fields("get") ->
-    emqx_bridge_schema:status_fields() ++ fields("post");
-fields(What) ->
-    erlang:error({whhhhhhhhhhhhhatttttttttttttttttttttttt, What}).
+    emqx_bridge_schema:status_fields() ++ fields("post").
 
 fields("post", Type) ->
     [type_field(Type), name_field() | fields("config")].
@@ -122,6 +130,7 @@ desc(_) ->
 
 %% -------------------------------------------------------------------------------------------------
 %% internal
+%% -------------------------------------------------------------------------------------------------
 is_hidden_opts(Field) ->
     lists:member(Field, [
         async_inflight_window

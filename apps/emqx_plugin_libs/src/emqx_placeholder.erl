@@ -114,7 +114,6 @@ proc_tmpl(Tokens, Data, Opts = #{return := rawlist}) ->
             ({str, Str}) ->
                 Str;
             ({var, Phld}) when is_function(Trans, 1) ->
-                show(translate_phld, Phld),
                 Trans(get_phld_var(Phld, Data));
             ({var, Phld}) when is_function(Trans, 2) ->
                 Trans(Phld, get_phld_var(Phld, Data));
@@ -123,14 +122,6 @@ proc_tmpl(Tokens, Data, Opts = #{return := rawlist}) ->
         end,
         Tokens
     ).
-
-% show(X) ->
-%     erlang:display(X),
-%     X.
-
-show(Label, What) ->
-    erlang:display({Label, What}),
-    What.
 
 -spec preproc_cmd(binary()) -> tmpl_cmd().
 preproc_cmd(Str) ->

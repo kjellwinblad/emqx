@@ -54,7 +54,6 @@ examples(Method) ->
         end,
     Fun =
         fun(Module, Examples) ->
-            erlang:display({Module, conn_bridge_examples, [Method]}),
             ConnectorExamples = erlang:apply(Module, conn_bridge_examples, [Method]),
             lists:foldl(MergeFun, Examples, ConnectorExamples)
         end,
@@ -184,7 +183,7 @@ clickhouse_structs() ->
             mk(
                 hoconsc:map(name, ref(emqx_ee_bridge_clickhouse, "config")),
                 #{
-                    desc => <<Name/binary, " Bridge Config">>,
+                    desc => <<Name/binary, "Clickhouse Bridge Config">>,
                     required => false
                 }
             )}

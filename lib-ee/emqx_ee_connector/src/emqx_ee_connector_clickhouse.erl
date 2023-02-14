@@ -13,22 +13,32 @@
 %% See the License for the specific language governing permissions and
 %% limitations under the License.
 %%--------------------------------------------------------------------
+
 -module(emqx_ee_connector_clickhouse).
 
 -include_lib("emqx_connector/include/emqx_connector.hrl").
+-include_lib("emqx_resource/include/emqx_resource.hrl").
 -include_lib("typerefl/include/types.hrl").
 -include_lib("emqx/include/logger.hrl").
 -include_lib("hocon/include/hoconsc.hrl").
--include_lib("epgsql/include/epgsql.hrl").
 -include_lib("snabbkaffe/include/snabbkaffe.hrl").
-
--export([roots/0, fields/1]).
 
 -behaviour(emqx_resource).
 
 -import(hoconsc, [mk/2, enum/1, ref/2]).
 
-%% callbacks of behaviour emqx_resource
+%%=====================================================================
+%% Exports
+%%=====================================================================
+
+%% Hocon config schema exports
+-export([
+    roots/0,
+    fields/1,
+    values/1
+]).
+
+%% callbacks for behaviour emqx_resource
 -export([
     callback_mode/0,
     on_start/2,
@@ -38,37 +48,40 @@
     on_get_status/2
 ]).
 
--export([connect/1, values/1]).
+%% callbacks for ecpool
+-export([connect/1]).
 
+%% Internal exports used to execute code with ecpool worker
 -export([
-    query/2,
-    execute_batch/2,
-    send_message/2
+    check_database_status/1,
+    execute_sql_in_clickhouse_server_using_connection/2
 ]).
 
--export([do_get_status/1]).
-
--define(CLICKHOUSE_HOST_OPTIONS, #{
-    default_port => ?CLICKHOUSE_DEFAULT_PORT
-}).
-
-sc(Type, Meta) -> hoconsc:mk(Type, Meta).
+%%=====================================================================
+%% Types
+%%=====================================================================
 
 -type url() :: emqx_http_lib:uri_map().
 -reflect_type([url/0]).
 -typerefl_from_string({url/0, emqx_http_lib, uri_parse}).
 
--type prepares() :: #{atom() => binary()}.
--type params_tokens() :: #{atom() => list()}.
+-type templates() ::
+    #{}
+    | #{
+        send_message_template := term(),
+        extend_send_message_template := term()
+    }.
 
 -type state() ::
     #{
-        poolname := atom(),
-        prepare_sql := prepares(),
-        params_tokens := params_tokens(),
-        prepare_statement := eclickhouse:statement()
+        templates := templates(),
+        poolname := atom()
     }.
 
+-type clickhouse_config() :: map().
+
+%%=====================================================================
+%% Configuration and default values
 %%=====================================================================
 
 roots() ->
@@ -77,7 +90,7 @@ roots() ->
 fields(config) ->
     [
         {url,
-            sc(
+            hoconsc:mk(
                 url(),
                 #{
                     required => true,
@@ -91,33 +104,6 @@ fields(config) ->
                 }
             )}
     ] ++ emqx_connector_schema_lib:relational_db_fields().
-%fields("creation_opts") ->
-%    lists:filter(
-%        fun({K, _V}) ->
-%            not lists:member(K, unsupported_opts())
-%        end,
-%        emqx_resource_schema:fields("creation_opts")
-%    ).
-
-% creation_opts() ->
-%     [
-%         {resource_opts,
-%             mk(
-%                 ref(?MODULE, "creation_opts"),
-%                 #{
-%                     required => false,
-%                     default => #{},
-%                     desc => ?DESC(emqx_resource_schema, <<"resource_opts">>)
-%                 }
-%             )}
-%     ].
-
-% unsupported_opts() ->
-%     [
-%         enable_batch,
-%         batch_size,
-%         batch_time
-%     ].
 
 values(post) ->
     maps:merge(values(put), #{name => <<"connector">>});
@@ -125,6 +111,9 @@ values(get) ->
     values(post);
 values(put) ->
     #{
+        database => <<"mqtt">>,
+        enable => true,
+        pool_size => 8,
         type => clickhouse,
         url => <<"http://127.0.0.1:6570">>
     };
@@ -132,26 +121,19 @@ values(_) ->
     #{}.
 
 %% ===================================================================
+%% Callbacks defined in emqx_resource
+%% ===================================================================
+
 callback_mode() -> always_sync.
-% #{database => <<"mqtt">>,
-%   enable => true,
-%   pool_size => 8,
-%                         resource_opts =>
-%                             #{auto_restart_interval => 60000,
-%                               batch_size => 100,batch_time => 20,
-%                               health_check_interval => 15000,
-%                               max_queue_bytes => 104857600,query_mode => sync,
-%                               request_timeout => 15000,
-%                               start_after_created => true,
-%                               start_timeout => 5000,worker_pool_size => 16},
-%                         sql =>
-%                             <<"insert into t_mqtt_msg(msgid, topic, qos, payload, arrived) values (${id}, ${topic}, ${qos}, ${payload}, TO_TIMESTAMP((${timestamp} :: bigint)/1000))">>,
-%                         url =>
-%                             #{host => "localhost",path => "/",port => 18123,
-%                               scheme => http}}]
--spec on_start(binary(), hoconsc:config()) -> {ok, state()} | {error, _}.
+
+%% -------------------------------------------------------------------
+%% on_start callback and related functions
+%% -------------------------------------------------------------------
+
+-spec on_start(resource_id(), clickhouse_config()) -> {ok, state()} | {error, _}.
+
 on_start(
-    InstId,
+    InstanceID,
     #{
         url := URL,
         database := DB,
@@ -160,10 +142,10 @@ on_start(
 ) ->
     ?SLOG(info, #{
         msg => "starting_clickhouse_connector",
-        connector => InstId,
+        connector => InstanceID,
         config => emqx_misc:redact(Config)
     }),
-    PoolName = emqx_plugin_libs_pool:pool_name(InstId),
+    PoolName = emqx_plugin_libs_pool:pool_name(InstanceID),
     Options = [
         {url, URL},
         {user, maps:get(username, Config, "default")},
@@ -175,167 +157,81 @@ on_start(
     ],
     InitState = #{poolname => PoolName},
     try
-        PreparedSQL = prepare_sql(Config),
-        State = maps:merge(InitState, PreparedSQL),
+        Templates = prepare_sql_templates(Config),
+        State = maps:merge(InitState, #{templates => Templates}),
         case emqx_plugin_libs_pool:start_pool(PoolName, ?MODULE, Options) of
             ok ->
                 {ok, State};
             {error, Reason} ->
-                ?SLOG(info, #{
-                    msg => "clickhouse_connector_start_failed",
-                    error_reason => Reason,
-                    config => emqx_misc:redact(Config)
-                }),
-                ?tp(
-                    clickhouse_connector_start_failed,
-                    #{error => Reason}
-                ),
+                log_start_error(Config, Reason, none),
                 {error, Reason}
         end
     catch
-        ErrorType:CatchReason:Stack ->
-            ?SLOG(info, #{
-                msg => "clickhouse_connector_start_failed",
-                error_type => ErrorType,
-                error_reason => CatchReason,
-                error_stack => Stack,
-                config => emqx_misc:redact(Config)
-            }),
+        _:CatchReason:Stacktrace ->
+            log_start_error(Config, CatchReason, Stacktrace),
             {error, CatchReason}
     end.
 
-on_stop(InstId, #{poolname := PoolName}) ->
-    ?SLOG(info, #{
-        msg => "stopping clickouse connector",
-        connector => InstId
-    }),
-    emqx_plugin_libs_pool:stop_pool(PoolName).
-
-on_query(InstId, {TypeOrKey, NameOrSQL}, #{poolname := _PoolName} = State) ->
-    erlang:display({on_query_got2}),
-    on_query(InstId, {TypeOrKey, NameOrSQL, []}, State);
-on_query(
-    InstId,
-    {TypeOrKey, DataOrSQL, Params},
-    #{poolname := PoolName} = State
-) ->
-    erlang:display({on_query_got1}),
-    ?SLOG(debug, #{
-        msg => "clickhouse connector received sql query",
-        connector => InstId,
-        type => TypeOrKey,
-        sql => DataOrSQL,
-        state => State,
-        params => Params
-    }),
-    Type = clickhouse_query_type(TypeOrKey),
-    % {SQL, Data} = show(got_what_hej, proc_sql_params(show(type_or_key, TypeOrKey), NameOrSQL, Params, State)),
-    SQL = get_sql(Type, State, DataOrSQL),
-    show(query22222222222222222, on_sql_query(InstId, PoolName, Type, SQL)).
-
-get_sql(send_message, #{send_message := PreparedSQL}, Data) ->
-    emqx_plugin_libs_rule:proc_tmpl(PreparedSQL, Data);
-get_sql(_, _, SQL) ->
-    SQL.
-
-clickhouse_query_type(sql) ->
-    query;
-clickhouse_query_type(query) ->
-    query;
-%% For bridges we use prepared query
-clickhouse_query_type(_) ->
-    send_message.
-
-on_batch_query(
-    InstId,
-    BatchReq,
-    State
-) ->
-    %% Currently we only support batch requests with the send_message key
-    {Keys, ObjectsToInsert} = lists:unzip(BatchReq),
-    case is_all_keys_send_message(Keys) of
-        true ->
-            do_batch_insert(InstId, ObjectsToInsert, State);
-        false ->
-            Log = #{
-                connector => InstId,
-                request => BatchReq,
-                state => State,
-                msg => "invalid request"
-            },
-            ?SLOG(error, Log),
-            {error, invalid_request}
-    end.
-
-is_send_message_atom(send_message) ->
-    true;
-is_send_message_atom(_) ->
-    false.
-
-is_all_keys_send_message(Keys) ->
-    lists:all(fun is_send_message_atom/1, Keys).
-
-do_batch_insert(
-    InstId,
-    [FirstObject | RemainingObjects] = _ObjectsToInsert,
-    #{
-        send_message_template := InsertTemplate,
-        extend_send_message_template := BulkExtendInsertTemplate,
-        poolname := PoolName
-    }
-) ->
-    %% Prepare INSERT-statement and the first row after VALUES
-    InsertStatementHead = emqx_plugin_libs_rule:proc_tmpl(InsertTemplate, FirstObject),
-    FormatObjectData =
-        fun(Object) ->
-            emqx_plugin_libs_rule:proc_tmpl(BulkExtendInsertTemplate, Object)
+log_start_error(Config, Reason, Stacktrace) ->
+    StacktraceMap =
+        case Stacktrace of
+            none -> #{};
+            _ -> #{stacktrace => Stacktrace}
         end,
-    InsertStatementTail = lists:map(FormatObjectData, RemainingObjects),
-    CompleteStatement = erlang:iolist_to_binary([InsertStatementHead, InsertStatementTail]),
-    on_sql_query(InstId, PoolName, send_message, CompleteStatement).
+    LogMessage =
+        #{
+            msg => "clickhouse_connector_start_failed",
+            error_reason => Reason,
+            config => emqx_misc:redact(Config)
+        },
+    ?SLOG(info, maps:merge(LogMessage, StacktraceMap)),
+    ?tp(
+        clickhouse_connector_start_failed,
+        #{error => Reason}
+    ).
 
-on_sql_query(InstId, PoolName, Type, SQL) ->
-    Result = ecpool:pick_and_do(PoolName, {?MODULE, Type, [SQL]}, no_handover),
-    case Result of
-        {error, Reason} ->
-            ?SLOG(error, #{
-                msg => "clickhouse connector do sql query failed",
-                connector => InstId,
-                type => Type,
-                sql => SQL,
-                reason => Reason
-            });
-        _ ->
-            ?tp(
-                clickhouse_connector_query_return,
-                #{result => Result}
-            ),
-            ok
-    end,
-    Result.
+%% Helper functions to prepare SQL tempaltes
 
-on_get_status(_InstId, #{poolname := Pool} = _State) ->
-    show(statusssssssssssssssssssss, aa),
-    case emqx_plugin_libs_pool:health_check_ecpool_workers(Pool, fun ?MODULE:do_get_status/1) of
-        true ->
-            connected;
-        false ->
-            connecting
+prepare_sql_templates(#{
+    sql := Template,
+    batch_value_separator := Separator
+}) ->
+    InsertTemplate =
+        emqx_plugin_libs_rule:preproc_tmpl(Template),
+    BulkExtendInsertTemplate =
+        prepare_sql_bulk_extend_template(Template, Separator),
+    #{
+        send_message_template => InsertTemplate,
+        extend_send_message_template => BulkExtendInsertTemplate
+    };
+prepare_sql_templates(_) ->
+    %% We don't create any templates if this is a non-bridge connector
+    #{}.
+
+prepare_sql_bulk_extend_template(Template, Separator) ->
+    case emqx_plugin_libs_rule:split_insert_sql(Template) of
+        {ok, {_, ValuesTemplate}} ->
+            %% The part after VALUES have been extracted
+            %% Add , before ParamTemplate so that one can append it
+            %% to an insert template
+            ExtendParamTemplate = iolist_to_binary([Separator, ValuesTemplate]),
+            emqx_plugin_libs_rule:preproc_tmpl(ExtendParamTemplate);
+        {error, not_insert_sql} ->
+            erlang:error(
+                <<"The SQL template should be an SQL INSERT statement but it is something else.">>
+            )
     end.
 
-do_get_status(Conn) ->
-    Status = clickhouse:status(Conn),
-    Status.
+% This is a callback for ecpool which is triggered by the call to
+% emqx_plugin_libs_pool:start_pool in on_start/2
 
-%% ===================================================================
-
-connect(Opts) ->
-    URL = iolist_to_binary(emqx_http_lib:normalize(proplists:get_value(url, Opts))),
-    User = proplists:get_value(user, Opts),
-    Database = proplists:get_value(database, Opts),
-    Key = emqx_secret:unwrap(proplists:get_value(key, Opts)),
-    Pool = proplists:get_value(pool, Opts),
-    PoolSize = proplists:get_value(pool_size, Opts),
+connect(Options) ->
+    URL = iolist_to_binary(emqx_http_lib:normalize(proplists:get_value(url, Options))),
+    User = proplists:get_value(user, Options),
+    Database = proplists:get_value(database, Options),
+    Key = emqx_secret:unwrap(proplists:get_value(key, Options)),
+    Pool = proplists:get_value(pool, Options),
+    PoolSize = proplists:get_value(pool_size, Options),
     FixedOptions = [
         {url, URL},
         {database, Database},
@@ -351,64 +247,174 @@ connect(Opts) ->
             {error, Reason}
     end.
 
-show(Label, What) ->
-    erlang:display({Label, What}),
-    What.
+%% -------------------------------------------------------------------
+%% on_stop emqx_resouce callback
+%% -------------------------------------------------------------------
 
-show(X) ->
-    erlang:display(X),
-    X.
+-spec on_stop(resource_id(), resource_state()) -> term().
 
-query(Conn, SQL) ->
-    send_message(Conn, SQL).
+on_stop(ResourceID, #{poolname := PoolName}) ->
+    ?SLOG(info, #{
+        msg => "stopping clickouse connector",
+        connector => ResourceID
+    }),
+    emqx_plugin_libs_pool:stop_pool(PoolName).
 
-execute_batch(Conn, Statement) ->
-    send_message(Conn, Statement).
+%% -------------------------------------------------------------------
+%% on_get_status emqx_resouce callback and related functions
+%% -------------------------------------------------------------------
 
-send_message(Conn, Statement) ->
-    show(what_sql, Statement),
-    case clickhouse:query(Conn, Statement, []) of
-        {ok, 200, <<"">>} ->
-            ok;
-        {ok, 200, Data} ->
-            {ok, Data};
-        Error ->
-            {error, Error}
+on_get_status(_ResourceID, #{poolname := Pool} = _State) ->
+    case
+        emqx_plugin_libs_pool:health_check_ecpool_workers(Pool, fun ?MODULE:check_database_status/1)
+    of
+        true ->
+            connected;
+        false ->
+            connecting
     end.
 
-to_bin(Bin) when is_binary(Bin) ->
-    Bin;
-to_bin(Atom) when is_atom(Atom) ->
-    erlang:atom_to_binary(Atom).
+check_database_status(Connection) ->
+    clickhouse:status(Connection).
 
-prepare_sql(Config) ->
-    case maps:get(sql, Config, undefined) of
-        undefined ->
-            #{};
-        Template ->
-            prepare_sql_string(Template)
-    end.
+%% -------------------------------------------------------------------
+%% on_query emqx_resouce callback and related functions
+%% -------------------------------------------------------------------
 
-prepare_sql_string(Template) ->
-    InsertTemplate =
-        emqx_plugin_libs_rule:preproc_tmpl(Template),
-    BulkExtendInsertTemplate =
-        prepare_sql_bulk_extend_insert_template(Template),
+-spec on_query
+    (resource_id(), Request, resource_state()) -> query_result() when
+        Request :: {RequestType, Data},
+        RequestType :: send_message,
+        Data :: map();
+    (resource_id(), Request, resource_state()) -> query_result() when
+        Request :: {RequestType, SQL},
+        RequestType :: sql | query,
+        SQL :: binary().
+
+on_query(
+    ResourceID,
+    {RequestType, DataOrSQL},
+    #{poolname := PoolName} = State
+) ->
+    ?SLOG(debug, #{
+        msg => "clickhouse connector received sql query",
+        connector => ResourceID,
+        type => RequestType,
+        sql => DataOrSQL,
+        state => State
+    }),
+    %% Have we got a query or data to fit into an SQL template?
+    SimplifiedRequestType = query_type(RequestType),
+    #{templates := Templates} = State,
+    SQL = get_sql(SimplifiedRequestType, Templates, DataOrSQL),
+    ClickhouseResult = execute_sql_in_clickhouse_server(PoolName, SQL),
+    transform_and_log_clickhouse_result(ClickhouseResult, ResourceID, SQL).
+
+get_sql(send_message, #{send_message_template := PreparedSQL}, Data) ->
+    emqx_plugin_libs_rule:proc_tmpl(PreparedSQL, Data);
+get_sql(_, _, SQL) ->
+    SQL.
+
+query_type(sql) ->
+    query;
+query_type(query) ->
+    query;
+%% Data that goes to bridges use the prepared template
+query_type(send_message) ->
+    send_message.
+
+%% -------------------------------------------------------------------
+%% on_batch_query emqx_resouce callback and related functions
+%% -------------------------------------------------------------------
+
+-spec on_batch_query(resource_id(), BatchReq, resource_state()) -> query_result() when
+    BatchReq :: nonempty_list({'send_message', map()}).
+
+on_batch_query(
+    ResourceID,
+    BatchReq,
+    State
+) ->
+    %% Currently we only support batch requests with the send_message key
+    {Keys, ObjectsToInsert} = lists:unzip(BatchReq),
+    ensure_keys_are_of_type_send_message(Keys),
+    %% Pick out the SQL template
     #{
-        send_message_template => InsertTemplate,
-        extend_send_message_template => BulkExtendInsertTemplate
-    }.
+        templates := Templates,
+        poolname := PoolName
+    } = State,
+    %% Create batch insert SQL statement
+    SQL = objects_to_sql(ObjectsToInsert, Templates),
+    %% Do the actual query in the database
+    ResultFromClickhouse = execute_sql_in_clickhouse_server(PoolName, SQL),
+    %% Transform the result to a better format
+    transform_and_log_clickhouse_result(ResultFromClickhouse, ResourceID, SQL).
 
-prepare_sql_bulk_extend_insert_template(Template) ->
-    case emqx_plugin_libs_rule:split_insert_sql(Template) of
-        {ok, {_, ValuesTemplate}} ->
-            %% The part after VALUES have been extracted
-            %% Add , before ParamTemplate so that one can append it
-            %% to an insert template
-            ExtendParamTemplate = erlang:iolist_to_binary([", ", ValuesTemplate]),
-            emqx_plugin_libs_rule:preproc_tmpl(ExtendParamTemplate);
-        {error, not_insert_sql} ->
-            erlang:error(
-                <<"The SQL template should be an SQL INSERT statement but it is something else.">>
-            )
+ensure_keys_are_of_type_send_message(Keys) ->
+    case lists:all(fun is_send_message_atom/1, Keys) of
+        true -> ok;
+        false -> erlang:error(<<"Unexpected type for batch message (Expected send_message)">>)
     end.
+
+is_send_message_atom(send_message) ->
+    true;
+is_send_message_atom(_) ->
+    false.
+
+objects_to_sql(
+    [FirstObject | RemainingObjects] = _ObjectsToInsert,
+    #{
+        send_message_template := InsertTemplate,
+        extend_send_message_template := BulkExtendInsertTemplate
+    }
+) ->
+    %% Prepare INSERT-statement and the first row after VALUES
+    InsertStatementHead = emqx_plugin_libs_rule:proc_tmpl(InsertTemplate, FirstObject),
+    FormatObjectDataFunction =
+        fun(Object) ->
+            emqx_plugin_libs_rule:proc_tmpl(BulkExtendInsertTemplate, Object)
+        end,
+    InsertStatementTail = lists:map(FormatObjectDataFunction, RemainingObjects),
+    CompleteStatement = erlang:iolist_to_binary([InsertStatementHead, InsertStatementTail]),
+    CompleteStatement;
+objects_to_sql(_, _) ->
+    erlang:error(<<"Templates for bulk insert missing.">>).
+
+%% -------------------------------------------------------------------
+%% Helper functions that are used by both on_query/3 and on_batch_query/3
+%% -------------------------------------------------------------------
+
+%% This function is used by on_query/3 and on_batch_query/3 to send a query to
+%% the database server and receive a result
+execute_sql_in_clickhouse_server(PoolName, SQL) ->
+    ecpool:pick_and_do(
+        PoolName,
+        {?MODULE, execute_sql_in_clickhouse_server_using_connection, [SQL]},
+        no_handover
+    ).
+
+execute_sql_in_clickhouse_server_using_connection(Connection, SQL) ->
+    clickhouse:query(Connection, SQL, []).
+
+%% This function transforms the result received from clickhouse to something
+%% that is a little bit more readable and creates approprieate log messages
+transform_and_log_clickhouse_result({ok, 200, <<"">>} = _ClickhouseResult, _, _) ->
+    snabbkaffe_log_return(),
+    ok;
+transform_and_log_clickhouse_result({ok, 200, Data}, _, _) ->
+    snabbkaffe_log_return(),
+    {ok, Data};
+transform_and_log_clickhouse_result(ClickhouseErrorResult, ResourceID, SQL) ->
+    ?SLOG(error, #{
+        msg => "clickhouse connector do sql query failed",
+        connector => ResourceID,
+        sql => SQL,
+        reason => ClickhouseErrorResult
+    }),
+    {error, ClickhouseErrorResult}.
+
+snabbkaffe_log_return() ->
+    ?tp(
+        clickhouse_connector_query_return,
+        #{result => Result}
+    ).

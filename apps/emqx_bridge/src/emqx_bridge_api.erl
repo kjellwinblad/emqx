@@ -286,8 +286,7 @@ mqtt_ingress_example() ->
     }.
 
 schema("/bridges") ->
-    erlang:display(hej),
-    Ret = #{
+    #{
         'operationId' => '/bridges',
         get => #{
             tags => [<<"bridges">>],
@@ -313,9 +312,7 @@ schema("/bridges") ->
                 400 => error_schema('ALREADY_EXISTS', "Bridge already exists")
             }
         }
-    },
-    erlang:display({got_ret}),
-    Ret;
+    };
 schema("/bridges/:id") ->
     #{
         'operationId' => '/bridges/:id',
@@ -457,10 +454,7 @@ schema("/bridges_probe") ->
                 400 => error_schema(['TEST_FAILED'], "bridge test failed")
             }
         }
-    };
-schema(Arg) ->
-    erlang:display({what}),
-    erlang:error({no_mathcin_schema_path, Arg}).
+    }.
 
 '/bridges'(post, #{body := #{<<"type">> := BridgeType, <<"name">> := BridgeName} = Conf0}) ->
     Conf = filter_out_request_body(Conf0),

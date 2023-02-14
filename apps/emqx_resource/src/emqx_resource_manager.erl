@@ -147,7 +147,6 @@ create(MgrId, ResId, Group, ResourceType, Config, Opts) ->
             %% buffer, so there is no need for resource workers
             ok;
         false ->
-            erlang:display({herrrrrrrrrrrrrrrrrrrrreeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee}),
             ok = emqx_resource_buffer_worker_sup:start_workers(ResId, Opts),
             case maps:get(start_after_created, Opts, ?START_AFTER_CREATED) of
                 true ->
@@ -301,11 +300,6 @@ start_link(MgrId, ResId, Group, ResourceType, Config, Opts) ->
 
 init({Data, Opts}) ->
     process_flag(trap_exit, true),
-    erlang:display({resource_man_created_debug_started, self()}),
-    spawn(fun() ->
-        sys:log(self(), print),
-        erlang:display({resource_man_created_debug_started_done})
-    end),
     %% init the cache so that lookup/1 will always return something
     DataWithPid = Data#data{pid = self()},
     insert_cache(DataWithPid#data.id, DataWithPid#data.group, DataWithPid),
@@ -335,7 +329,6 @@ handle_event({call, From}, restart, _State, Data) ->
     start_resource(Data, From);
 % Called when the resource is to be started
 handle_event({call, From}, start, stopped, Data) ->
-    erlang:display({start_resource}),
     start_resource(Data, From);
 handle_event({call, From}, start, _State, _Data) ->
     {keep_state_and_data, [{reply, From, ok}]};
@@ -365,7 +358,6 @@ handle_event({call, From}, health_check, _State, Data) ->
     handle_manually_health_check(From, Data);
 % State: CONNECTING
 handle_event(enter, _OldState, connecting, Data) ->
-    erlang:display({enter_connecting}),
     UpdatedData = Data#data{status = connecting},
     insert_cache(Data#data.id, Data#data.group, Data),
     Actions = [{state_timeout, 0, health_check}],
