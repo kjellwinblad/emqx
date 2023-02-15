@@ -399,11 +399,12 @@ execute_sql_in_clickhouse_server_using_connection(Connection, SQL) ->
 %% This function transforms the result received from clickhouse to something
 %% that is a little bit more readable and creates approprieate log messages
 transform_and_log_clickhouse_result({ok, 200, <<"">>} = _ClickhouseResult, _, _) ->
-    snabbkaffe_log_return(),
+    snabbkaffe_log_return(ok),
     ok;
 transform_and_log_clickhouse_result({ok, 200, Data}, _, _) ->
-    snabbkaffe_log_return(),
-    {ok, Data};
+    Result = {ok, Data},
+    snabbkaffe_log_return(Result),
+    Result;
 transform_and_log_clickhouse_result(ClickhouseErrorResult, ResourceID, SQL) ->
     ?SLOG(error, #{
         msg => "clickhouse connector do sql query failed",
@@ -413,7 +414,7 @@ transform_and_log_clickhouse_result(ClickhouseErrorResult, ResourceID, SQL) ->
     }),
     {error, ClickhouseErrorResult}.
 
-snabbkaffe_log_return() ->
+snabbkaffe_log_return(Result) ->
     ?tp(
         clickhouse_connector_query_return,
         #{result => Result}

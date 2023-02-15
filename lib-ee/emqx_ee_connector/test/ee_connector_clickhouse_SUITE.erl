@@ -124,6 +124,7 @@ perform_lifecycle_check(PoolName, InitialConfig) ->
     ?assertEqual({ok, connected}, emqx_resource:health_check(PoolName)),
     % % Perform query as further check that the resource is working as expected
     (fun() ->
+        erlang:display({pool_name, PoolName}),
         QueryNoParamsResWrapper = emqx_resource:query(PoolName, test_query_no_params()),
         ?assertMatch({ok, _}, QueryNoParamsResWrapper),
         {_, QueryNoParamsRes} = QueryNoParamsResWrapper,
