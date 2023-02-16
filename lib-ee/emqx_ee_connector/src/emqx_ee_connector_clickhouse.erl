@@ -209,17 +209,35 @@ prepare_sql_templates(_) ->
     #{}.
 
 prepare_sql_bulk_extend_template(Template, Separator) ->
-    case emqx_plugin_libs_rule:split_insert_sql(Template) of
-        {ok, {_, ValuesTemplate}} ->
-            %% The part after VALUES have been extracted
-            %% Add , before ParamTemplate so that one can append it
-            %% to an insert template
-            ExtendParamTemplate = iolist_to_binary([Separator, ValuesTemplate]),
-            emqx_plugin_libs_rule:preproc_tmpl(ExtendParamTemplate);
-        {error, not_insert_sql} ->
-            erlang:error(
-                <<"The SQL template should be an SQL INSERT statement but it is something else.">>
-            )
+    ValuesTemplate = split_clickhouse_insert_sql(Template),
+    %% The value part has been extracted
+    %% Add separator before ValuesTemplate so that one can append it
+    %% to an insert template
+    ExtendParamTemplate = iolist_to_binary([Separator, ValuesTemplate]),
+    emqx_plugin_libs_rule:preproc_tmpl(ExtendParamTemplate).
+
+%% This function is similar to emqx_plugin_libs_rule:split_insert_sql/1 but can
+%% also handle Clickhouse's SQL extension for INSERT statments that allows the
+%% user to specify different formats:
+%%
+%% https://clickhouse.com/docs/en/sql-reference/statements/insert-into/
+%%
+split_clickhouse_insert_sql(SQL) ->
+    ErrorMsg = <<"The SQL template should be an SQL INSERT statement but it is something else.">>,
+    case
+        re:split(SQL, "(\\s+(?i:values)|(?i:format\\s+(?:[A-Za-z0-9_])+)\\s+)", [{return, binary}])
+    of
+        [Part1, _, Part3] ->
+            case string:trim(Part1, leading) of
+                <<"insert", _/binary>> ->
+                    Part3;
+                <<"INSERT", _/binary>> ->
+                    Part3;
+                _ ->
+                    erlang:error(ErrorMsg)
+            end;
+        _ ->
+            erlang:error(ErrorMsg)
     end.
 
 % This is a callback for ecpool which is triggered by the call to
@@ -414,8 +432,8 @@ transform_and_log_clickhouse_result(ClickhouseErrorResult, ResourceID, SQL) ->
     }),
     {error, ClickhouseErrorResult}.
 
-snabbkaffe_log_return(Result) ->
+snabbkaffe_log_return(_Result) ->
     ?tp(
         clickhouse_connector_query_return,
-        #{result => Result}
+        #{result => _Result}
     ).

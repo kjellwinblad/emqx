@@ -32,45 +32,44 @@ init_per_suite(Config) ->
             {ok, _} = application:ensure_all_started(emqx_ee_bridge),
             snabbkaffe:fix_ct_logging(),
             %% Create the db table
-            InitPerSuiteProcess = self(),
-            %% Start clickhouse connector in sub process so that it does not go
-            %% down with the process that is calling  init_per_suite
-            erlang:spawn(
-                fun() ->
-                    {ok, Conn} =
-                        clickhouse:start_link([
-                            {url, clickhouse_url()},
-                            {user, <<"default">>},
-                            {key, "public"},
-                            {pool, tmp_pool}
-                        ]),
-                    InitPerSuiteProcess ! {clickhouse_connection, Conn},
-                    Ref = erlang:monitor(process, Conn),
-                    receive
-                        {'DOWN', Ref, process, _, _} ->
-                            erlang:display(helper_down),
-                            ok
-                    end
-                end
-            ),
-            Conn =
-                receive
-                    {clickhouse_connection, C} -> C
-                end,
+            Conn = start_clickhouse_connection(),
             % erlang:monitor,sb
             {ok, _, _} = clickhouse:query(Conn, sql_create_database(), #{}),
             {ok, _, _} = clickhouse:query(Conn, sql_create_table(), []),
-            show(saving_clickhouse_connection, Conn),
-            show(saving_clickhouse_connection_test, clickhouse:query(Conn, sql_find_key(42), [])),
-            show(saving_clickhouse_connection_state, sys:get_state(Conn)),
+            clickhouse:query(Conn, sql_find_key(42), []),
             [{clickhouse_connection, Conn} | Config];
         false ->
             {skip, no_clickhouse}
     end.
 
+start_clickhouse_connection() ->
+    %% Start clickhouse connector in sub process so that it does not go
+    %% down with the process that is calling  init_per_suite
+    InitPerSuiteProcess = self(),
+    erlang:spawn(
+        fun() ->
+            {ok, Conn} =
+                clickhouse:start_link([
+                    {url, clickhouse_url()},
+                    {user, <<"default">>},
+                    {key, "public"},
+                    {pool, tmp_pool}
+                ]),
+            InitPerSuiteProcess ! {clickhouse_connection, Conn},
+            Ref = erlang:monitor(process, Conn),
+            receive
+                {'DOWN', Ref, process, _, _} ->
+                    erlang:display(helper_down),
+                    ok
+            end
+        end
+    ),
+    receive
+        {clickhouse_connection, C} -> C
+    end.
+
 end_per_suite(Config) ->
     ClickhouseConnection = proplists:get_value(clickhouse_connection, Config),
-    show(stopping_clickhouse_connection, ClickhouseConnection),
     clickhouse:stop(ClickhouseConnection),
     ok = emqx_common_test_helpers:stop_apps([emqx_conf]),
     ok = emqx_connector_test_helpers:stop_apps([emqx_resource]),
@@ -83,16 +82,22 @@ all() ->
         t_make_delete_bridge,
         t_send_message_query,
         t_send_simple_batch,
-        t_heavy_batching
+        t_send_simple_batch_alternative_format,
+        t_heavy_batching,
+        t_heavy_batching_alternative_format
     ].
 
 %%------------------------------------------------------------------------------
 %% Helper functions for test cases
 %%------------------------------------------------------------------------------
 
-sql_insert_tmeplate_for_bridge() ->
-    "INSERT INTO mqtt_test(key, data, arrived) "
-    "VALUES (${key}, '${data}', ${timestamp})".
+sql_insert_template_for_bridge() ->
+    "INSERT INTO mqtt_test(key, data, arrived) VALUES "
+    "(${key}, '${data}', ${timestamp})".
+
+sql_insert_template_for_bridge_json() ->
+    "INSERT INTO mqtt_test(key, data, arrived) FORMAT JSONCompactEachRow "
+    "[${key}, \\\"${data}\\\", ${timestamp}]".
 
 sql_create_table() ->
     "CREATE TABLE IF NOT EXISTS mqtt.mqtt_test (key BIGINT, data String, arrived BIGINT) ENGINE = Memory".
@@ -118,8 +123,11 @@ clickhouse_url() ->
     ]).
 
 clickhouse_config(Config) ->
+    SQL = maps:get(sql, Config, sql_insert_template_for_bridge()),
+    BatchSeparator = maps:get(batch_value_separator, Config, <<", ">>),
     BatchSize = maps:get(batch_size, Config, 1),
     BatchTime = maps:get(batch_time_ms, Config, 0),
+    EnableBatch = maps:get(enable_batch, Config, true),
     Name = atom_to_binary(?MODULE),
     URL = clickhouse_url(),
     ConfigString =
@@ -129,7 +137,9 @@ clickhouse_config(Config) ->
             "  url = \"~s\"\n"
             "  database = \"mqtt\"\n"
             "  sql = \"~s\"\n"
+            "  batch_value_separator = \"~s\""
             "  resource_opts = {\n"
+            "    enable_batch = ~w\n"
             "    batch_size = ~b\n"
             "    batch_time = ~bms\n"
             "  }\n"
@@ -137,11 +147,14 @@ clickhouse_config(Config) ->
             [
                 Name,
                 URL,
-                sql_insert_tmeplate_for_bridge(),
+                SQL,
+                BatchSeparator,
+                EnableBatch,
                 BatchSize,
                 BatchTime
             ]
         ),
+    ct:pal(ConfigString),
     parse_and_check(ConfigString, <<"clickhouse">>, Name).
 
 parse_and_check(ConfigString, BridgeType, Name) ->
@@ -150,18 +163,10 @@ parse_and_check(ConfigString, BridgeType, Name) ->
     #{<<"bridges">> := #{BridgeType := #{Name := RetConfig}}} = RawConf,
     RetConfig.
 
-show(X) ->
-    erlang:display(X),
-    X.
-
-show(Label, What) ->
-    erlang:display({Label, What}),
-    What.
-
-make_bridge(_Config) ->
+make_bridge(Config) ->
     Type = <<"clickhouse">>,
     Name = atom_to_binary(?MODULE),
-    BridgeConfig = clickhouse_config(#{}),
+    BridgeConfig = clickhouse_config(Config),
     {ok, _} = emqx_bridge:create(
         Type,
         Name,
@@ -180,6 +185,27 @@ reset_table(Config) ->
     {ok, _, _} = clickhouse:query(ClickhouseConnection, sql_drop_table(), []),
     {ok, _, _} = clickhouse:query(ClickhouseConnection, sql_create_table(), []),
     ok.
+
+check_key_in_clickhouse(AttempsLeft, Key, Config) ->
+    ClickhouseConnection = proplists:get_value(clickhouse_connection, Config),
+    check_key_in_clickhouse(AttempsLeft, Key, none, ClickhouseConnection).
+
+check_key_in_clickhouse(Key, Config) ->
+    ClickhouseConnection = proplists:get_value(clickhouse_connection, Config),
+    check_key_in_clickhouse(30, Key, none, ClickhouseConnection).
+
+check_key_in_clickhouse(0, Key, PrevResult, _) ->
+    ct:fail("Expected ~p in database but got ~s", [Key, PrevResult]);
+check_key_in_clickhouse(AttempsLeft, Key, _, ClickhouseConnection) ->
+    {ok, 200, ResultString} = clickhouse:query(ClickhouseConnection, sql_find_key(Key), []),
+    Expected = erlang:integer_to_binary(Key),
+    case iolist_to_binary(string:trim(ResultString)) of
+        Expected ->
+            ok;
+        SomethingElse ->
+            timer:sleep(100),
+            check_key_in_clickhouse(AttempsLeft - 1, Key, SomethingElse, ClickhouseConnection)
+    end.
 
 %%------------------------------------------------------------------------------
 %% Test Cases
@@ -205,37 +231,77 @@ t_make_delete_bridge(_Config) ->
 
 t_send_message_query(Config) ->
     reset_table(Config),
-    ClickhouseConnection = proplists:get_value(clickhouse_connection, Config),
-    BridgeID = make_bridge(#{}),
-    Payload = #{key => 42, data => <<"clickhouse_data">>, timestamp => 10000},
+    BridgeID = make_bridge(#{enable_batch => false}),
+    Key = 42,
+    Payload = #{key => Key, data => <<"clickhouse_data">>, timestamp => 10000},
     %% This will use the SQL template included in the bridge
     emqx_bridge:send_message(BridgeID, Payload),
     %% Check that the data got to the database
-    {ok, 200, ResultString} = clickhouse:query(ClickhouseConnection, sql_find_key(42), []),
-    <<"42">> = iolist_to_binary(string:trim(ResultString)),
+    %%timer:sleep(1000),
+    % {ok, 200, ResultString} = clickhouse:query(ClickhouseConnection, sql_find_key(42), []),
+    % <<"42">> = iolist_to_binary(string:trim(ResultString)),
+
+    check_key_in_clickhouse(Key, Config),
     delete_bridge(),
     reset_table(Config),
     ok.
 
 t_send_simple_batch(Config) ->
+    send_simple_batch_helper(Config, #{}).
+
+t_send_simple_batch_alternative_format(Config) ->
+    send_simple_batch_helper(
+        Config,
+        #{
+            sql => sql_insert_template_for_bridge_json(),
+            batch_value_separator => <<"">>
+        }
+    ).
+
+send_simple_batch_helper(Config, BridgeConfigExt) ->
     reset_table(Config),
-    ClickhouseConnection = proplists:get_value(clickhouse_connection, Config),
-    BridgeID = make_bridge(#{batch_size => 100}),
-    Payload = #{key => 42, data => <<"clickhouse_data">>, timestamp => 10000},
+    BridgeConf = maps:merge(
+        #{
+            batch_size => 100,
+            enable_batch => true
+        },
+        BridgeConfigExt
+    ),
+    BridgeID = make_bridge(BridgeConf),
+    Key = 42,
+    Payload = #{key => Key, data => <<"clickhouse_data">>, timestamp => 10000},
     %% This will use the SQL template included in the bridge
     emqx_bridge:send_message(BridgeID, Payload),
-    {ok, 200, ResultString} = clickhouse:query(ClickhouseConnection, sql_find_key(42), []),
-    <<"42">> = iolist_to_binary(string:trim(ResultString)),
+    check_key_in_clickhouse(Key, Config),
     delete_bridge(),
     reset_table(Config),
     ok.
 
 t_heavy_batching(Config) ->
+    heavy_batching_helper(Config, #{}).
+
+t_heavy_batching_alternative_format(Config) ->
+    heavy_batching_helper(
+        Config,
+        #{
+            sql => sql_insert_template_for_bridge_json(),
+            batch_value_separator => <<"">>
+        }
+    ).
+
+heavy_batching_helper(Config, BridgeConfigExt) ->
     reset_table(Config),
     ClickhouseConnection = proplists:get_value(clickhouse_connection, Config),
-    BatchTime = 500,
     NumberOfMessages = 10000,
-    BridgeID = make_bridge(#{batch_size => 100, batch_time_ms => BatchTime}),
+    BridgeConf = maps:merge(
+        #{
+            batch_size => 743,
+            batch_time_ms => 50,
+            enable_batch => true
+        },
+        BridgeConfigExt
+    ),
+    BridgeID = make_bridge(BridgeConf),
     SendMessageKey = fun(Key) ->
         Payload = #{
             key => Key,
@@ -245,11 +311,15 @@ t_heavy_batching(Config) ->
         emqx_bridge:send_message(BridgeID, Payload)
     end,
     [SendMessageKey(Key) || Key <- lists:seq(1, NumberOfMessages)],
-    timer:sleep(BatchTime * 5),
+    % Wait until the last message is in clickhouse
+    %% The delay between attempts is 100ms so 150 attempts means 15 seconds
+    check_key_in_clickhouse(_AttemptsToFindKey = 150, NumberOfMessages, Config),
+    %% In case the messages are not sent in order (could happend with multiple buffer workers)
+    timer:sleep(1000),
     {ok, 200, ResultString1} = clickhouse:query(ClickhouseConnection, sql_find_all_keys(), []),
     ResultString2 = iolist_to_binary(string:trim(ResultString1)),
-    KeyStrings = string:split(ResultString2, "\n"),
-    Keys = [erlang:list_to_integer(KeyString) || KeyString <- KeyStrings],
+    KeyStrings = string:lexemes(ResultString2, "\n"),
+    Keys = [erlang:binary_to_integer(iolist_to_binary(K)) || K <- KeyStrings],
     KeySet = maps:from_keys(Keys, true),
     NumberOfMessages = maps:size(KeySet),
     CheckKey = fun(Key) -> maps:get(Key, KeySet, false) end,
