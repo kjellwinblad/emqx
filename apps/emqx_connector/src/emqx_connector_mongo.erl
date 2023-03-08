@@ -182,7 +182,7 @@ on_start(
             {ok, #{
                 poolname => PoolName,
                 type => Type,
-                collection => Collection
+                collection => make_collection_bin(Collection)
             }};
         {error, Reason} ->
             {error, Reason}
@@ -198,8 +198,9 @@ on_stop(InstId, #{poolname := PoolName}) ->
 on_query(
     InstId,
     {send_message, Document},
-    #{poolname := PoolName, collection := Collection} = State
+    #{poolname := PoolName, collection := CollectionOrg} = State
 ) ->
+    Collection = make_collection_bin(CollectionOrg),
     Request = {insert, Collection, Document},
     ?TRACE(
         "QUERY",
@@ -226,9 +227,10 @@ on_query(
     end;
 on_query(
     InstId,
-    {Action, Collection, Filter, Projector},
+    {Action, CollectionOrg, Filter, Projector},
     #{poolname := PoolName} = State
 ) ->
+    Collection = make_collection_bin(CollectionOrg),
     Request = {Action, Collection, Filter, Projector},
     ?TRACE(
         "QUERY",
@@ -255,6 +257,14 @@ on_query(
         Result ->
             {ok, Result}
     end.
+
+%% For some reason the collection name is turned into an atom by the emqx_authz
+%% application which causes the mongo query to break. TODO: This should probably
+%% be fixed at another level.
+make_collection_bin(Atom) when is_atom(Atom) ->
+    erlang:atom_to_binary(Atom);
+make_collection_bin(Bin) ->
+    Bin.
 
 -dialyzer({nowarn_function, [on_get_status/2]}).
 on_get_status(InstId, #{poolname := PoolName} = _State) ->
