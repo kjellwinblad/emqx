@@ -6,9 +6,12 @@
 -include_lib("emqx/include/logger.hrl").
 -include_lib("hocon/include/hoconsc.hrl").
 -include_lib("snabbkaffe/include/snabbkaffe.hrl").
+%% Needed to create connection
+-include_lib("amqp_client/include/amqp_client.hrl").
 
 -behaviour(emqx_resource).
 -behaviour(hocon_schema).
+-behaviour(ecpool_worker).
 
 %% hocon_schema callbacks
 -export([roots/0, fields/1]).
@@ -17,15 +20,17 @@
 -export([values/1]).
 
 %% emqx_resource callbacks
-
-%% Required callbacks
 -export([
+    %% Required callbacks
     on_start/2,
     on_stop/2,
     callback_mode/0,
     %% Optional callbacks
     is_buffer_supported/0
 ]).
+
+%% callbacks for ecpool_worker
+-export([connect/1]).
 
 roots() ->
     [{config, #{type => hoconsc:ref(?MODULE, config)}}].
@@ -341,14 +346,6 @@ is_buffer_supported() ->
 
 -spec on_start(resource_id(), term()) -> {ok, term()} | {error, _}.
 
-% [<<"emqx_ee_connector_rabbitmq_SUITE:1">>,
-%                       #{auto_reconnect => 2000,durable => false,
-%                         exchange => <<"test_exchange">>,
-%                         exchange_type => topic,heartbeat => 30000,
-%                         password => <<"guest">>,payload_template => <<>>,
-%                         port => 5672,routing_key => <<"test_routing_key">>,
-%                         server => <<"localhost">>,timeout => 5000,
-%                         username => <<"guest">>,virtual_host => <<"/">>}]
 on_start(
     InstanceID,
     #{
@@ -364,6 +361,8 @@ on_start(
     PoolName = emqx_plugin_libs_pool:pool_name(InstanceID),
     Options = [
         {config, Config},
+        %% The pool_size is read by ecpool and decides the number of workers in
+        %% the pool
         {pool_size, PoolSize},
         {pool, PoolName}
     ],
@@ -392,3 +391,47 @@ on_stop(
 ) ->
     erlang:display({on_stop}),
     ok.
+
+connect(Options) ->
+    Config = proplists:get_value(config, Options),
+    #{
+        server := Host,
+        port := Port,
+        username := Username,
+        password := Password,
+        timeout := Timeout,
+        virtual_host := VirtualHost,
+        heartbeat := Heartbeat
+    } = Config,
+    %XX {auto_reconnect => 2000,
+    %XX  durable => false,
+    %XX  exchange => <<"test_exchange">>,
+    %XX  exchange_type => topic,
+    %XX  heartbeat => 30000,
+    %XX  password => <<"guest">>,
+    %XX  payload_template => <<>>,
+    %  pool_size => 8,
+    %XX  port => 5672,
+    %  routing_key => <<"test_routing_key">>,
+    %  server => <<"localhost">>,
+    %  timeout => 5000,
+    %  username => <<"guest">>,
+    %  virtual_host => <<"/">>}
+    RabbitMQConnectionOptions =
+        #amqp_params_network{
+            host = erlang:binary_to_list(Host),
+            port = Port,
+            username = Username,
+            password = Password,
+            connection_timeout = Timeout,
+            virtual_host = VirtualHost,
+            heartbeat = Heartbeat
+        },
+    {ok, RabbitMQConnection} = amqp_connection:start(RabbitMQConnectionOptions),
+    {ok, RabbitMQChannel} = amqp_connection:open_channel(RabbitMQConnection),
+    {ok,
+        #{
+            connection => RabbitMQConnection,
+            channel => RabbitMQChannel
+        },
+        #{supervisees => [RabbitMQConnection, RabbitMQChannel]}}.
