@@ -90,8 +90,10 @@ manager_id_to_resource_id(MgrId) ->
 ensure_resource(ResId, Group, ResourceType, Config, Opts) ->
     case lookup(ResId) of
         {ok, _Group, Data} ->
+            erlang:display({found}),
             {ok, Data};
         {error, not_found} ->
+            erlang:display({not_found}),
             MgrId = set_new_owner(ResId),
             create_and_return_data(MgrId, ResId, Group, ResourceType, Config, Opts)
     end.
@@ -112,7 +114,9 @@ recreate(ResId, ResourceType, NewConfig, Opts) ->
     end.
 
 create_and_return_data(MgrId, ResId, Group, ResourceType, Config, Opts) ->
+    erlang:display({create_and_return_data, MgrId, ResId, Group, ResourceType, Config, Opts}),
     _ = create(MgrId, ResId, Group, ResourceType, Config, Opts),
+    erlang:display({list_all, list_all()}),
     {ok, _Group, Data} = lookup(ResId),
     {ok, Data}.
 
@@ -141,12 +145,14 @@ create(MgrId, ResId, Group, ResourceType, Config, Opts) ->
         ],
         [matched]
     ),
+    erlang:display({is_buf_supp, ResourceType}),
     case emqx_resource:is_buffer_supported(ResourceType) of
         true ->
             %% the resource it self supports
             %% buffer, so there is no need for resource workers
             ok;
         false ->
+            erlang:display({start_workers}),
             ok = emqx_resource_buffer_worker_sup:start_workers(ResId, Opts),
             case maps:get(start_after_created, Opts, ?START_AFTER_CREATED) of
                 true ->
@@ -229,6 +235,7 @@ set_resource_status_connecting(ResId) ->
 %% @doc Lookup the group and data of a resource
 -spec lookup(resource_id()) -> {ok, resource_group(), resource_data()} | {error, not_found}.
 lookup(ResId) ->
+    erlang:display({lookup, ResId}),
     case safe_call(ResId, lookup, ?T_LOOKUP) of
         {error, timeout} -> lookup_cached(ResId);
         Result -> Result
@@ -337,6 +344,7 @@ handle_event({call, From}, start, State, Data) when
     State =:= stopped orelse
         State =:= disconnected
 ->
+    erlang:display({handle_even_start, State, Data}),
     start_resource(Data, From);
 handle_event({call, From}, start, _State, _Data) ->
     {keep_state_and_data, [{reply, From, ok}]};
@@ -468,6 +476,7 @@ set_new_owner(ResId) ->
 
 set_owner(ResId, MgrId) ->
     ets:insert(?ETS_TABLE, {{owner, ResId}, MgrId}),
+    erlang:display({set_owner}),
     ok.
 
 get_owner(ResId) ->
@@ -703,6 +712,7 @@ safe_call(ResId, Message, Timeout) ->
     try
         case read_cache(ResId) of
             not_found ->
+                erlang:display({safe_call, not_found, ResId}),
                 {error, not_found};
             {_, #data{pid = ManagerPid}} ->
                 gen_statem:call(ManagerPid, Message, {clean_timeout, Timeout})

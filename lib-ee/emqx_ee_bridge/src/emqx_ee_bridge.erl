@@ -97,7 +97,8 @@ resource_type(clickhouse) -> emqx_ee_connector_clickhouse;
 resource_type(dynamo) -> emqx_ee_connector_dynamo;
 resource_type(rocketmq) -> emqx_ee_connector_rocketmq;
 resource_type(sqlserver) -> emqx_ee_connector_sqlserver;
-resource_type(opents) -> emqx_bridge_opents_connector.
+resource_type(opents) -> emqx_bridge_opents_connector;
+resource_type(rabbitmq) -> emqx_ee_connector_rabbitmq.
 
 fields(bridges) ->
     [

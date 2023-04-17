@@ -24,7 +24,9 @@
 -export([init/1]).
 
 ensure_child(MgrId, ResId, Group, ResourceType, Config, Opts) ->
-    _ = supervisor:start_child(?MODULE, [MgrId, ResId, Group, ResourceType, Config, Opts]),
+    erlang:display({ensure_child, MgrId, ResId, Group, ResourceType, Config, Opts}),
+    {ok, _Pid} = supervisor:start_child(?MODULE, [MgrId, ResId, Group, ResourceType, Config, Opts]),
+    erlang:display({ensure_child__ok}),
     ok.
 
 start_link() ->
