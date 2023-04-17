@@ -166,8 +166,8 @@ perform_lifecycle_check(PoolName, InitialConfig) ->
             emqx_ee_connector_rabbitmq,
             CheckedConfig,
             #{}
-        ).
-% ?assertEqual(InitialStatus, connected),
+        ),
+    ?assertEqual(InitialStatus, connected).
 % % Instance should match the state and status of the just started resource
 % {ok, ?CONNECTOR_RESOURCE_GROUP, #{
 %     state := State,

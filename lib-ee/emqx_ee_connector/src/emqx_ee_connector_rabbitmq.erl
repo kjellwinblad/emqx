@@ -25,6 +25,7 @@
     on_start/2,
     on_stop/2,
     callback_mode/0,
+    on_get_status/1,
     %% Optional callbacks
     is_buffer_supported/0
 ]).
@@ -435,3 +436,6 @@ connect(Options) ->
             channel => RabbitMQChannel
         },
         #{supervisees => [RabbitMQConnection, RabbitMQChannel]}}.
+
+on_get_status(_Term) ->
+    connected.
