@@ -25,7 +25,8 @@
     on_start/2,
     on_stop/2,
     callback_mode/0,
-    on_get_status/1,
+    on_get_status/2,
+    on_query/3,
     %% Optional callbacks
     is_buffer_supported/0
 ]).
@@ -350,7 +351,8 @@ is_buffer_supported() ->
 on_start(
     InstanceID,
     #{
-        pool_size := PoolSize
+        pool_size := PoolSize,
+        payload_template := PayloadTemplate
     } = Config
 ) ->
     erlang:display({on_start, InstanceID, Config}),
@@ -367,7 +369,12 @@ on_start(
         {pool_size, PoolSize},
         {pool, PoolName}
     ],
-    State = #{poolname => PoolName},
+    ProcessedTemplate = emqx_plugin_libs_rule:preproc_tmpl(PayloadTemplate),
+    State = #{
+        poolname => PoolName,
+        processed_payload_template => ProcessedTemplate,
+        config => Config
+    },
     case emqx_plugin_libs_pool:start_pool(PoolName, ?MODULE, Options) of
         ok ->
             {ok, State};
@@ -437,5 +444,96 @@ connect(Options) ->
         },
         #{supervisees => [RabbitMQConnection, RabbitMQChannel]}}.
 
-on_get_status(_Term) ->
-    connected.
+on_get_status(
+    _InstId,
+    #{
+        poolname := PoolName
+    } = State
+) ->
+    erlang:display({on_get_status, PoolName}),
+    Workers = [Worker || {_WorkerName, Worker} <- ecpool:workers(PoolName)],
+    Clients = [
+        begin
+            {ok, Client} = ecpool_worker:client(Worker),
+            Client
+        end
+     || Worker <- Workers
+    ],
+    erlang:display({on_get_status, Clients}),
+    CheckResults = [
+        check_worker(Client)
+     || Client <- Clients
+    ],
+    erlang:display({on_get_status2, CheckResults}),
+    Connected = length(CheckResults) > 0 andalso lists:all(fun(R) -> R end, CheckResults),
+    case Connected of
+        true ->
+            {connected, State};
+        false ->
+            {disconnect, State, <<"not_connected">>}
+    end.
+
+check_worker(#{
+    channel := Channel,
+    connection := Connection
+}) ->
+    erlang:is_process_alive(Channel) andalso erlang:is_process_alive(Connection).
+
+on_query(
+    ResourceID,
+    {RequestType, Data},
+    #{
+        poolname := PoolName,
+        processed_payload_template := PayloadTemplate,
+        config := Config
+    } = State
+) ->
+    ?SLOG(debug, #{
+        msg => "RabbitMQ connector received query",
+        connector => ResourceID,
+        type => RequestType,
+        sql => Data,
+        state => State
+    }),
+    #{
+        exchange := Exchange,
+        exchange_type := ExchangeType,
+        routing_key := RoutingKey
+    } = Config,
+    erlang:display({on_query, ResourceID, RequestType, Data, State}),
+    try
+        Method = #'basic.publish'{
+            exchange = Exchange,
+            routing_key = RoutingKey
+        },
+        AmqpMsg = #amqp_msg{
+            props = #'P_basic'{headers = []},
+            payload = format_data(PayloadTemplate, Data)
+        },
+        ecpool:with_client(PoolName, fun(#{channel := Channel}) ->
+            ok = amqp_channel:cast(Channel, Method, AmqpMsg)
+        end)
+    catch
+        W:E:S ->
+            erlang:display({on_query_error, W, E, S}),
+            erlang:error({error, W, E, S})
+    end.
+% ?SLOG(debug, #{
+%     msg => "clickhouse connector received sql query",
+%     connector => ResourceID,
+%     type => RequestType,
+%     sql => DataOrSQL,
+%     state => State
+% }),
+% %% Have we got a query or data to fit into an SQL template?
+% SimplifiedRequestType = query_type(RequestType),
+% #{templates := Templates} = State,
+% SQL = get_sql(SimplifiedRequestType, Templates, DataOrSQL),
+% ClickhouseResult = execute_sql_in_clickhouse_server(PoolName, SQL),
+% transform_and_log_clickhouse_result(ClickhouseResult, ResourceID, SQL).
+
+format_data([], Msg) ->
+    emqx_utils_json:encode(Msg);
+format_data(Tokens, Msg) ->
+    erlang:display({format_data, Tokens, Msg}),
+    emqx_plugin_libs_rule:proc_tmpl(Tokens, Msg).

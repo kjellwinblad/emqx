@@ -167,22 +167,23 @@ perform_lifecycle_check(PoolName, InitialConfig) ->
             CheckedConfig,
             #{}
         ),
-    ?assertEqual(InitialStatus, connected).
-% % Instance should match the state and status of the just started resource
-% {ok, ?CONNECTOR_RESOURCE_GROUP, #{
-%     state := State,
-%     status := InitialStatus
-% }} =
-%     emqx_resource:get_instance(PoolName),
-% ?assertEqual({ok, connected}, emqx_resource:health_check(PoolName)),
-% % % Perform query as further check that the resource is working as expected
-% (fun() ->
-%     erlang:display({pool_name, PoolName}),
-%     QueryNoParamsResWrapper = emqx_resource:query(PoolName, test_query_no_params()),
-%     ?assertMatch({ok, _}, QueryNoParamsResWrapper),
-%     {_, QueryNoParamsRes} = QueryNoParamsResWrapper,
-%     ?assertMatch(<<"1">>, string:trim(QueryNoParamsRes))
-% end)(),
+    ?assertEqual(InitialStatus, connected),
+    %% Instance should match the state and status of the just started resource
+    {ok, ?CONNECTOR_RESOURCE_GROUP, #{
+        state := State,
+        status := InitialStatus
+    }} =
+        emqx_resource:get_instance(PoolName),
+    ?assertEqual({ok, connected}, emqx_resource:health_check(PoolName)),
+    %% Perform query as further check that the resource is working as expected
+    (fun() ->
+        erlang:display({pool_name, PoolName}),
+        QueryNoParamsResWrapper = emqx_resource:query(PoolName, test_data()),
+        erlang:display({query_no_params_res_wrapper, QueryNoParamsResWrapper})
+    % ?assertMatch({ok, _}, QueryNoParamsResWrapper),
+    % {_, QueryNoParamsRes} = QueryNoParamsResWrapper,
+    % ?assertMatch(<<"1">>, string:trim(QueryNoParamsRes))
+    end)().
 % ?assertEqual(ok, emqx_resource:stop(PoolName)),
 % % Resource will be listed still, but state will be changed and healthcheck will fail
 % % as the worker no longer exists.
@@ -231,5 +232,5 @@ rabbitmq_config() ->
         },
     #{<<"config">> => Config}.
 
-test_query_no_params() ->
-    {query, <<"SELECT 1">>}.
+test_data() ->
+    {query, #{<<"msg_field">> => <<"Hello">>}}.
