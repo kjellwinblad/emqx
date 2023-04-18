@@ -36,7 +36,8 @@ api_schemas(Method) ->
         ref(emqx_ee_bridge_dynamo, Method),
         ref(emqx_ee_bridge_rocketmq, Method),
         ref(emqx_ee_bridge_sqlserver, Method),
-        ref(emqx_bridge_opents, Method)
+        ref(emqx_bridge_opents, Method),
+        ref(emqx_ee_bridge_rabbitmq, Method)
     ].
 
 schema_modules() ->
@@ -57,7 +58,8 @@ schema_modules() ->
         emqx_ee_bridge_dynamo,
         emqx_ee_bridge_rocketmq,
         emqx_ee_bridge_sqlserver,
-        emqx_bridge_opents
+        emqx_bridge_opents,
+        emqx_ee_bridge_rabbitmq
     ].
 
 examples(Method) ->
@@ -167,7 +169,7 @@ fields(bridges) ->
                 }
             )}
     ] ++ kafka_structs() ++ mongodb_structs() ++ influxdb_structs() ++ redis_structs() ++
-        pgsql_structs() ++ clickhouse_structs() ++ sqlserver_structs().
+        pgsql_structs() ++ clickhouse_structs() ++ sqlserver_structs() ++ rabbitmq_structs().
 
 mongodb_structs() ->
     [
@@ -272,6 +274,18 @@ sqlserver_structs() ->
                 hoconsc:map(name, ref(emqx_ee_bridge_sqlserver, "config")),
                 #{
                     desc => <<"Microsoft SQL Server Bridge Config">>,
+                    required => false
+                }
+            )}
+    ].
+
+rabbitmq_structs() ->
+    [
+        {rabbitmq,
+            mk(
+                hoconsc:map(name, ref(emqx_ee_bridge_rabbitmq, "config")),
+                #{
+                    desc => <<"RabbitMQ Bridge Config">>,
                     required => false
                 }
             )}
