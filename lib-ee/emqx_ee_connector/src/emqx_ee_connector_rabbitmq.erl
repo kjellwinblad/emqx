@@ -25,9 +25,9 @@
     on_start/2,
     on_stop/2,
     callback_mode/0,
+    %% Optional callbacks
     on_get_status/2,
     on_query/3,
-    %% Optional callbacks
     is_buffer_supported/0
 ]).
 
@@ -390,15 +390,38 @@ on_start(
     end.
 
 on_stop(
-    _InstanceID,
-    #{
-        server := _Server,
-        port := _Port,
-        pool_size := _PoolSize
-    } = _Config
+    ResourceID,
+    #{poolname := PoolName}
 ) ->
-    erlang:display({on_stop}),
-    ok.
+    ?SLOG(info, #{
+        msg => "stopping RabbitMQ connector",
+        connector => ResourceID
+    }),
+    Workers = [Worker || {_WorkerName, Worker} <- ecpool:workers(PoolName)],
+    Clients = [
+        begin
+            {ok, Client} = ecpool_worker:client(Worker),
+            Client
+        end
+     || Worker <- Workers
+    ],
+    erlang:display({on_stopxx, ResourceID, Clients}),
+    %% We need to stop the pool before stopping the workers as the pool monitors the workers
+    StopResult = emqx_plugin_libs_pool:stop_pool(PoolName),
+    erlang:display({on_stop, ResourceID, StopResult}),
+    % erlang:display({on_get_status, Clients}),
+    [
+        stop_worker(Client)
+     || Client <- Clients
+    ],
+    StopResult.
+
+stop_worker(#{
+    channel := Channel,
+    connection := Connection
+}) ->
+    amqp_channel:close(Channel),
+    amqp_connection:close(Connection).
 
 connect(Options) ->
     Config = proplists:get_value(config, Options),
@@ -497,7 +520,7 @@ on_query(
     }),
     #{
         exchange := Exchange,
-        exchange_type := ExchangeType,
+        %exchange_type := ExchangeType,
         routing_key := RoutingKey
     } = Config,
     erlang:display({on_query, ResourceID, RequestType, Data, State}),
@@ -511,7 +534,10 @@ on_query(
             payload = format_data(PayloadTemplate, Data)
         },
         ecpool:with_client(PoolName, fun(#{channel := Channel}) ->
+            %% On query
+            erlang:display({xxx_on_query, Channel, Method, AmqpMsg}),
             ok = amqp_channel:cast(Channel, Method, AmqpMsg)
+        %%true = amqp_channel:wait_for_confirms(Channel, 1000)
         end)
     catch
         W:E:S ->

@@ -50,14 +50,6 @@ all() ->
     emqx_common_test_helpers:all(?MODULE).
 
 init_per_suite(Config) ->
-    erlang:display({xxx_enable_trace, application:ensure_started(recon)}),
-
-    recon_trace:calls(
-        {emqx_resource_manager, '_', '_'},
-        100,
-        %% {io_server, user}
-        []
-    ),
     case
         emqx_common_test_helpers:is_tcp_server_available(
             erlang:binary_to_list(rabbit_mq_host()), rabbit_mq_port()
@@ -139,29 +131,26 @@ end_per_suite(Config) ->
 % %% Testcases
 % %%------------------------------------------------------------------------------
 
-t_lifecycle(_Config) ->
+t_lifecycle(Config) ->
     perform_lifecycle_check(
         <<"emqx_ee_connector_rabbitmq_SUITE">>,
-        rabbitmq_config()
+        rabbitmq_config(),
+        Config
     ).
 
-show(X) ->
-    erlang:display(X),
-    X.
-
-show(Label, What) ->
-    erlang:display({Label, What}),
-    What.
-
-perform_lifecycle_check(PoolName, InitialConfig) ->
+perform_lifecycle_check(ResourceID, InitialConfig, TestConfig) ->
+    #{
+        connection := Connection,
+        channel := Channel
+    } = get_channel_connection(TestConfig),
     {ok, #{config := CheckedConfig}} =
         emqx_resource:check_config(emqx_ee_connector_rabbitmq, InitialConfig),
     {ok, #{
-        state := #{poolname := ReturnedPoolName} = State,
+        state := #{poolname := PoolName} = State,
         status := InitialStatus
     }} =
         emqx_resource:create_local(
-            PoolName,
+            ResourceID,
             ?CONNECTOR_RESOURCE_GROUP,
             emqx_ee_connector_rabbitmq,
             CheckedConfig,
@@ -173,54 +162,73 @@ perform_lifecycle_check(PoolName, InitialConfig) ->
         state := State,
         status := InitialStatus
     }} =
-        emqx_resource:get_instance(PoolName),
-    ?assertEqual({ok, connected}, emqx_resource:health_check(PoolName)),
+        emqx_resource:get_instance(ResourceID),
+    ?assertEqual({ok, connected}, emqx_resource:health_check(ResourceID)),
     %% Perform query as further check that the resource is working as expected
-    (fun() ->
-        erlang:display({pool_name, PoolName}),
-        QueryNoParamsResWrapper = emqx_resource:query(PoolName, test_data()),
-        erlang:display({query_no_params_res_wrapper, QueryNoParamsResWrapper})
-    % ?assertMatch({ok, _}, QueryNoParamsResWrapper),
-    % {_, QueryNoParamsRes} = QueryNoParamsResWrapper,
-    % ?assertMatch(<<"1">>, string:trim(QueryNoParamsRes))
-    end)().
-% ?assertEqual(ok, emqx_resource:stop(PoolName)),
-% % Resource will be listed still, but state will be changed and healthcheck will fail
-% % as the worker no longer exists.
-% {ok, ?CONNECTOR_RESOURCE_GROUP, #{
-%     state := State,
-%     status := StoppedStatus
-% }} =
-%     emqx_resource:get_instance(PoolName),
-% ?assertEqual(stopped, StoppedStatus),
-% ?assertEqual({error, resource_is_stopped}, emqx_resource:health_check(PoolName)),
-% % Resource healthcheck shortcuts things by checking ets. Go deeper by checking pool itself.
-% ?assertEqual({error, not_found}, ecpool:stop_sup_pool(ReturnedPoolName)),
-% % Can call stop/1 again on an already stopped instance
-% ?assertEqual(ok, emqx_resource:stop(PoolName)),
-% % Make sure it can be restarted and the healthchecks and queries work properly
-% ?assertEqual(ok, emqx_resource:restart(PoolName)),
-% % async restart, need to wait resource
-% timer:sleep(500),
-% {ok, ?CONNECTOR_RESOURCE_GROUP, #{status := InitialStatus}} =
-%     emqx_resource:get_instance(PoolName),
-% ?assertEqual({ok, connected}, emqx_resource:health_check(PoolName)),
-% (fun() ->
-%     QueryNoParamsResWrapper =
-%         emqx_resource:query(PoolName, test_query_no_params()),
-%     ?assertMatch({ok, _}, QueryNoParamsResWrapper),
-%     {_, QueryNoParamsRes} = QueryNoParamsResWrapper,
-%     ?assertMatch(<<"1">>, string:trim(QueryNoParamsRes))
-% end)(),
-% % Stop and remove the resource in one go.
-% ?assertEqual(ok, emqx_resource:remove_local(PoolName)),
-% ?assertEqual({error, not_found}, ecpool:stop_sup_pool(ReturnedPoolName)),
-% % Should not even be able to get the resource data out of ets now unlike just stopping.
-% ?assertEqual({error, not_found}, emqx_resource:get_instance(PoolName)).
+    perform_query(ResourceID, Channel),
+    ?assertEqual(ok, emqx_resource:stop(ResourceID)),
+    %% Resource will be listed still, but state will be changed and healthcheck will fail
+    %% as the worker no longer exists.
+    {ok, ?CONNECTOR_RESOURCE_GROUP, #{
+        state := State,
+        status := StoppedStatus
+    }} = emqx_resource:get_instance(ResourceID),
+    ?assertEqual(stopped, StoppedStatus),
+    ?assertEqual({error, resource_is_stopped}, emqx_resource:health_check(ResourceID)),
+    % Resource healthcheck shortcuts things by checking ets. Go deeper by checking pool itself.
+    ?assertEqual({error, not_found}, ecpool:stop_sup_pool(PoolName)),
+    % Can call stop/1 again on an already stopped instance
+    ?assertEqual(ok, emqx_resource:stop(ResourceID)),
+    % Make sure it can be restarted and the healthchecks and queries work properly
+    ?assertEqual(ok, emqx_resource:restart(ResourceID)),
+    % async restart, need to wait resource
+    timer:sleep(500),
+    {ok, ?CONNECTOR_RESOURCE_GROUP, #{status := InitialStatus}} =
+        emqx_resource:get_instance(ResourceID),
+    ?assertEqual({ok, connected}, emqx_resource:health_check(ResourceID)),
+    %% Check that everything is working again by performing a query
+    perform_query(ResourceID, Channel),
+    % Stop and remove the resource in one go.
+    ?assertEqual(ok, emqx_resource:remove_local(ResourceID)),
+    ?assertEqual({error, not_found}, ecpool:stop_sup_pool(PoolName)),
+    % Should not even be able to get the resource data out of ets now unlike just stopping.
+    ?assertEqual({error, not_found}, emqx_resource:get_instance(ResourceID)).
 
 % %%------------------------------------------------------------------------------
 % %% Helpers
 % %%------------------------------------------------------------------------------
+
+perform_query(PoolName, Channel) ->
+    %% Send message to queue:
+    ok = emqx_resource:query(PoolName, {query, test_data()}),
+    %% Get the message from queue:
+    ok = receive_simple_test_message(Channel).
+
+receive_simple_test_message(Channel) ->
+    What =
+        #'basic.consume_ok'{consumer_tag = ConsumerTag} =
+        amqp_channel:call(
+            Channel,
+            #'basic.consume'{
+                queue = rabbit_mq_queue()
+            }
+        ),
+    receive
+        %% This is the first message received
+        #'basic.consume_ok'{} ->
+            ok
+    end,
+    receive
+        {#'basic.deliver'{delivery_tag = DeliveryTag}, Content} ->
+            Expected = test_data(),
+            Expected = emqx_utils_json:decode(Content#amqp_msg.payload),
+            %% Ack the message
+            amqp_channel:cast(Channel, #'basic.ack'{delivery_tag = DeliveryTag}),
+            %% Cancel the consumer
+            #'basic.cancel_ok'{consumer_tag = ConsumerTag} =
+                amqp_channel:call(Channel, #'basic.cancel'{consumer_tag = ConsumerTag}),
+            ok
+    end.
 
 rabbitmq_config() ->
     Config =
@@ -233,4 +241,4 @@ rabbitmq_config() ->
     #{<<"config">> => Config}.
 
 test_data() ->
-    {query, #{<<"msg_field">> => <<"Hello">>}}.
+    #{<<"msg_field">> => <<"Hello">>}.
