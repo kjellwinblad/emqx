@@ -8,10 +8,31 @@
 -compile(export_all).
 
 -include_lib("emqx_connector/include/emqx_connector.hrl").
+-include_lib("eunit/include/eunit.hrl").
+-include_lib("stdlib/include/assert.hrl").
+-include_lib("amqp_client/include/amqp_client.hrl").
 
 %% See comment in
 %% lib-ee/emqx_ee_connector/test/ee_connector_rabbitmq_SUITE.erl for how to
 %% run this without bringing up the whole CI infrastucture
+
+rabbit_mq_host() ->
+    <<"localhost">>.
+
+rabbit_mq_port() ->
+    5672.
+
+rabbit_mq_exchange() ->
+    <<"messages">>.
+
+rabbit_mq_queue() ->
+    <<"test_queue">>.
+
+rabbit_mq_routing_key() ->
+    <<"test_routing_key">>.
+
+get_channel_connection(Config) ->
+    proplists:get_value(channel_connection, Config).
 
 %%------------------------------------------------------------------------------
 %% Common Test Setup, Teardown and Testcase List
@@ -19,7 +40,9 @@
 
 init_per_suite(Config) ->
     case
-        emqx_common_test_helpers:is_tcp_server_available(?CLICKHOUSE_HOST, ?CLICKHOUSE_DEFAULT_PORT)
+        emqx_common_test_helpers:is_tcp_server_available(
+            erlang:binary_to_list(rabbit_mq_host()), rabbit_mq_port()
+        )
     of
         true ->
             emqx_common_test_helpers:render_and_load_app_config(emqx_conf),
@@ -28,14 +51,9 @@ init_per_suite(Config) ->
             {ok, _} = application:ensure_all_started(emqx_connector),
             {ok, _} = application:ensure_all_started(emqx_ee_connector),
             {ok, _} = application:ensure_all_started(emqx_ee_bridge),
-            snabbkaffe:fix_ct_logging(),
-            %% Create the db table
-            Conn = start_clickhouse_connection(),
-            % erlang:monitor,sb
-            {ok, _, _} = clickhouse:query(Conn, sql_create_database(), #{}),
-            {ok, _, _} = clickhouse:query(Conn, sql_create_table(), []),
-            clickhouse:query(Conn, sql_find_key(42), []),
-            [{clickhouse_connection, Conn} | Config];
+            {ok, _} = application:ensure_all_started(amqp_client),
+            ChannelConnection = setup_rabbit_mq_exchange_and_queue(),
+            [{channel_connection, ChannelConnection} | Config];
         false ->
             case os:getenv("IS_CI") of
                 "yes" ->
@@ -45,103 +63,86 @@ init_per_suite(Config) ->
             end
     end.
 
-start_clickhouse_connection() ->
-    %% Start clickhouse connector in sub process so that it does not go
-    %% down with the process that is calling init_per_suite
-    InitPerSuiteProcess = self(),
-    erlang:spawn(
-        fun() ->
-            {ok, Conn} =
-                clickhouse:start_link([
-                    {url, clickhouse_url()},
-                    {user, <<"default">>},
-                    {key, "public"},
-                    {pool, tmp_pool}
-                ]),
-            InitPerSuiteProcess ! {clickhouse_connection, Conn},
-            Ref = erlang:monitor(process, Conn),
-            receive
-                {'DOWN', Ref, process, _, _} ->
-                    erlang:display(helper_down),
-                    ok
-            end
-        end
-    ),
-    receive
-        {clickhouse_connection, C} -> C
-    end.
+setup_rabbit_mq_exchange_and_queue() ->
+    %% Create an exachange and a queue
+    {ok, Connection} =
+        amqp_connection:start(#amqp_params_network{
+            host = erlang:binary_to_list(rabbit_mq_host()),
+            port = rabbit_mq_port()
+        }),
+    {ok, Channel} = amqp_connection:open_channel(Connection),
+    %% Create an exchange
+    #'exchange.declare_ok'{} =
+        amqp_channel:call(
+            Channel,
+            #'exchange.declare'{
+                exchange = rabbit_mq_exchange(),
+                type = <<"topic">>
+            }
+        ),
+    %% Create a queue
+    #'queue.declare_ok'{} =
+        amqp_channel:call(
+            Channel,
+            #'queue.declare'{queue = rabbit_mq_queue()}
+        ),
+    %% Bind the queue to the exchange
+    RoutingKey = rabbit_mq_routing_key(),
+    #'queue.bind_ok'{} =
+        amqp_channel:call(
+            Channel,
+            #'queue.bind'{
+                queue = rabbit_mq_queue(),
+                exchange = rabbit_mq_exchange(),
+                routing_key = rabbit_mq_routing_key()
+            }
+        ),
+    #{
+        connection => Connection,
+        channel => Channel
+    }.
 
 end_per_suite(Config) ->
-    ClickhouseConnection = proplists:get_value(clickhouse_connection, Config),
-    clickhouse:stop(ClickhouseConnection),
+    #{
+        connection := Connection,
+        channel := Channel
+    } = get_channel_connection(Config),
     ok = emqx_common_test_helpers:stop_apps([emqx_conf]),
     ok = emqx_connector_test_helpers:stop_apps([emqx_resource]),
     _ = application:stop(emqx_connector),
     _ = application:stop(emqx_ee_connector),
-    _ = application:stop(emqx_bridge).
+    _ = application:stop(emqx_bridge),
+    %% Close the channel
+    ok = amqp_channel:close(Channel),
+    %% Close the connection
+    ok = amqp_connection:close(Connection).
 
 init_per_testcase(_, Config) ->
-    reset_table(Config),
     Config.
 
 end_per_testcase(_, Config) ->
-    reset_table(Config),
     ok.
 
 all() ->
     emqx_common_test_helpers:all(?MODULE).
 
-%%------------------------------------------------------------------------------
-%% Helper functions for test cases
-%%------------------------------------------------------------------------------
-
-sql_insert_template_for_bridge() ->
-    "INSERT INTO mqtt_test(key, data, arrived) VALUES "
-    "(${key}, '${data}', ${timestamp})".
-
-sql_insert_template_for_bridge_json() ->
-    "INSERT INTO mqtt_test(key, data, arrived) FORMAT JSONCompactEachRow "
-    "[${key}, \\\"${data}\\\", ${timestamp}]".
-
-sql_create_table() ->
-    "CREATE TABLE IF NOT EXISTS mqtt.mqtt_test (key BIGINT, data String, arrived BIGINT) ENGINE = Memory".
-
-sql_find_key(Key) ->
-    io_lib:format("SELECT key FROM mqtt.mqtt_test WHERE key = ~p", [Key]).
-
-sql_find_all_keys() ->
-    "SELECT key FROM mqtt.mqtt_test".
-
-sql_drop_table() ->
-    "DROP TABLE IF EXISTS mqtt.mqtt_test".
-
-sql_create_database() ->
-    "CREATE DATABASE IF NOT EXISTS mqtt".
-
-clickhouse_url() ->
-    erlang:iolist_to_binary([
-        <<"http://">>,
-        ?CLICKHOUSE_HOST,
-        ":",
-        erlang:integer_to_list(?CLICKHOUSE_DEFAULT_PORT)
-    ]).
-
-clickhouse_config(Config) ->
-    SQL = maps:get(sql, Config, sql_insert_template_for_bridge()),
-    BatchSeparator = maps:get(batch_value_separator, Config, <<", ">>),
+rabbitmq_config(Config) ->
+    %%SQL = maps:get(sql, Config, sql_insert_template_for_bridge()),
     BatchSize = maps:get(batch_size, Config, 1),
     BatchTime = maps:get(batch_time_ms, Config, 0),
     EnableBatch = maps:get(enable_batch, Config, true),
     Name = atom_to_binary(?MODULE),
-    URL = clickhouse_url(),
+    Server = rabbit_mq_host(),
+    Port = rabbit_mq_port(),
     ConfigString =
         io_lib:format(
-            "bridges.clickhouse.~s {\n"
+            "bridges.rabbitmq.~s {\n"
             "  enable = true\n"
-            "  url = \"~s\"\n"
-            "  database = \"mqtt\"\n"
-            "  sql = \"~s\"\n"
-            "  batch_value_separator = \"~s\""
+            "  server = \"~s\"\n"
+            "  port = ~p\n"
+            "  username = \"guest\"\n"
+            "  password = \"guest\"\n"
+            "  routing_key = \"~s\"\n"
             "  resource_opts = {\n"
             "    enable_batch = ~w\n"
             "    batch_size = ~b\n"
@@ -150,16 +151,16 @@ clickhouse_config(Config) ->
             "}\n",
             [
                 Name,
-                URL,
-                SQL,
-                BatchSeparator,
+                Server,
+                Port,
+                rabbit_mq_routing_key(),
                 EnableBatch,
                 BatchSize,
                 BatchTime
             ]
         ),
     ct:pal(ConfigString),
-    parse_and_check(ConfigString, <<"clickhouse">>, Name).
+    parse_and_check(ConfigString, <<"rabbitmq">>, Name).
 
 parse_and_check(ConfigString, BridgeType, Name) ->
     {ok, RawConf} = hocon:binary(ConfigString, #{format => map}),
@@ -168,9 +169,9 @@ parse_and_check(ConfigString, BridgeType, Name) ->
     RetConfig.
 
 make_bridge(Config) ->
-    Type = <<"clickhouse">>,
+    Type = <<"rabbitmq">>,
     Name = atom_to_binary(?MODULE),
-    BridgeConfig = clickhouse_config(Config),
+    BridgeConfig = rabbitmq_config(Config),
     {ok, _} = emqx_bridge:create(
         Type,
         Name,
@@ -179,37 +180,10 @@ make_bridge(Config) ->
     emqx_bridge_resource:bridge_id(Type, Name).
 
 delete_bridge() ->
-    Type = <<"clickhouse">>,
+    Type = <<"rabbitmq">>,
     Name = atom_to_binary(?MODULE),
     {ok, _} = emqx_bridge:remove(Type, Name),
     ok.
-
-reset_table(Config) ->
-    ClickhouseConnection = proplists:get_value(clickhouse_connection, Config),
-    {ok, _, _} = clickhouse:query(ClickhouseConnection, sql_drop_table(), []),
-    {ok, _, _} = clickhouse:query(ClickhouseConnection, sql_create_table(), []),
-    ok.
-
-check_key_in_clickhouse(AttempsLeft, Key, Config) ->
-    ClickhouseConnection = proplists:get_value(clickhouse_connection, Config),
-    check_key_in_clickhouse(AttempsLeft, Key, none, ClickhouseConnection).
-
-check_key_in_clickhouse(Key, Config) ->
-    ClickhouseConnection = proplists:get_value(clickhouse_connection, Config),
-    check_key_in_clickhouse(30, Key, none, ClickhouseConnection).
-
-check_key_in_clickhouse(0, Key, PrevResult, _) ->
-    ct:fail("Expected ~p in database but got ~s", [Key, PrevResult]);
-check_key_in_clickhouse(AttempsLeft, Key, _, ClickhouseConnection) ->
-    {ok, 200, ResultString} = clickhouse:query(ClickhouseConnection, sql_find_key(Key), []),
-    Expected = erlang:integer_to_binary(Key),
-    case iolist_to_binary(string:trim(ResultString)) of
-        Expected ->
-            ok;
-        SomethingElse ->
-            timer:sleep(100),
-            check_key_in_clickhouse(AttempsLeft - 1, Key, SomethingElse, ClickhouseConnection)
-    end.
 
 %%------------------------------------------------------------------------------
 %% Test Cases
@@ -236,88 +210,96 @@ t_make_delete_bridge(_Config) ->
 t_send_message_query(Config) ->
     BridgeID = make_bridge(#{enable_batch => false}),
     Key = 42,
-    Payload = #{key => Key, data => <<"clickhouse_data">>, timestamp => 10000},
+    Payload = #{<<"key">> => Key, <<"data">> => <<"RabbitMQ">>, <<"timestamp">> => 10000},
     %% This will use the SQL template included in the bridge
     emqx_bridge:send_message(BridgeID, Payload),
     %% Check that the data got to the database
-    check_key_in_clickhouse(Key, Config),
+    %% TODO
+    Payload2 = receive_simple_test_message(Config),
+    erlang:display({xxxxx, Payload2, Payload}),
+    Payload2 = Payload,
     delete_bridge(),
     ok.
 
 t_send_simple_batch(Config) ->
-    send_simple_batch_helper(Config, #{}).
-
-t_send_simple_batch_alternative_format(Config) ->
-    send_simple_batch_helper(
-        Config,
-        #{
-            sql => sql_insert_template_for_bridge_json(),
-            batch_value_separator => <<"">>
-        }
-    ).
-
-send_simple_batch_helper(Config, BridgeConfigExt) ->
-    BridgeConf = maps:merge(
+    BridgeConf =
         #{
             batch_size => 100,
             enable_batch => true
         },
-        BridgeConfigExt
-    ),
     BridgeID = make_bridge(BridgeConf),
     Key = 42,
-    Payload = #{key => Key, data => <<"clickhouse_data">>, timestamp => 10000},
+    Payload = #{<<"key">> => Key, <<"data">> => <<"RabbitMQ">>, <<"timestamp">> => 10000},
     %% This will use the SQL template included in the bridge
     emqx_bridge:send_message(BridgeID, Payload),
-    check_key_in_clickhouse(Key, Config),
+    Payload = receive_simple_test_message(Config),
     delete_bridge(),
     ok.
 
 t_heavy_batching(Config) ->
-    heavy_batching_helper(Config, #{}).
-
-t_heavy_batching_alternative_format(Config) ->
-    heavy_batching_helper(
-        Config,
-        #{
-            sql => sql_insert_template_for_bridge_json(),
-            batch_value_separator => <<"">>
-        }
-    ).
-
-heavy_batching_helper(Config, BridgeConfigExt) ->
-    ClickhouseConnection = proplists:get_value(clickhouse_connection, Config),
-    NumberOfMessages = 10000,
-    BridgeConf = maps:merge(
-        #{
-            batch_size => 743,
-            batch_time_ms => 50,
-            enable_batch => true
-        },
-        BridgeConfigExt
-    ),
+    NumberOfMessages = 4,
+    BridgeConf = #{
+        batch_size => 2,
+        batch_time_ms => 50,
+        enable_batch => true
+    },
     BridgeID = make_bridge(BridgeConf),
-    SendMessageKey = fun(Key) ->
+    SendMessage = fun(Key) ->
         Payload = #{
-            key => Key,
-            data => <<"clickhouse_data">>,
-            timestamp => 10000
+            <<"key">> => Key
         },
         emqx_bridge:send_message(BridgeID, Payload)
     end,
-    [SendMessageKey(Key) || Key <- lists:seq(1, NumberOfMessages)],
-    % Wait until the last message is in clickhouse
-    %% The delay between attempts is 100ms so 150 attempts means 15 seconds
-    check_key_in_clickhouse(_AttemptsToFindKey = 150, NumberOfMessages, Config),
-    %% In case the messages are not sent in order (could happend with multiple buffer workers)
-    timer:sleep(1000),
-    {ok, 200, ResultString1} = clickhouse:query(ClickhouseConnection, sql_find_all_keys(), []),
-    ResultString2 = iolist_to_binary(string:trim(ResultString1)),
-    KeyStrings = string:lexemes(ResultString2, "\n"),
-    Keys = [erlang:binary_to_integer(iolist_to_binary(K)) || K <- KeyStrings],
-    KeySet = maps:from_keys(Keys, true),
-    NumberOfMessages = maps:size(KeySet),
-    CheckKey = fun(Key) -> maps:get(Key, KeySet, false) end,
-    true = lists:all(CheckKey, lists:seq(1, NumberOfMessages)),
+    [SendMessage(Key) || Key <- lists:seq(1, NumberOfMessages)],
+    AllMessages = lists:foldl(
+        fun(_, Acc) ->
+            Message = receive_simple_test_message(Config),
+            erlang:display({xxx_message, Message}),
+            #{<<"key">> := Key} = Message,
+            Acc#{Key => true}
+        end,
+        #{},
+        lists:seq(1, NumberOfMessages)
+    ),
+    NumberOfMessages = maps:size(AllMessages),
     delete_bridge(),
     ok.
+
+receive_simple_test_message(Config) ->
+    #{channel := Channel} = get_channel_connection(Config),
+    What =
+        #'basic.consume_ok'{consumer_tag = ConsumerTag} =
+        amqp_channel:call(
+            Channel,
+            #'basic.consume'{
+                queue = rabbit_mq_queue()
+            }
+        ),
+    receive
+        %% This is the first message received
+        #'basic.consume_ok'{} ->
+            ok
+    end,
+    erlang:display({xxx_wait_for_message}),
+    receive
+        {#'basic.deliver'{delivery_tag = DeliveryTag}, Content} ->
+            %% Ack the message
+            amqp_channel:cast(Channel, #'basic.ack'{delivery_tag = DeliveryTag}),
+            %% Cancel the consumer
+            #'basic.cancel_ok'{consumer_tag = ConsumerTag} =
+                amqp_channel:call(Channel, #'basic.cancel'{consumer_tag = ConsumerTag}),
+            emqx_utils_json:decode(Content#amqp_msg.payload)
+    end.
+
+rabbitmq_config() ->
+    Config =
+        #{
+            server => rabbit_mq_host(),
+            port => 5672,
+            exchange => rabbit_mq_exchange(),
+            routing_key => rabbit_mq_routing_key()
+        },
+    #{<<"config">> => Config}.
+
+test_data() ->
+    #{<<"msg_field">> => <<"Hello">>}.

@@ -12,7 +12,6 @@
 -behaviour(emqx_resource).
 -behaviour(hocon_schema).
 -behaviour(ecpool_worker).
-
 %% hocon_schema callbacks
 -export([roots/0, fields/1]).
 
@@ -28,7 +27,8 @@
     %% Optional callbacks
     on_get_status/2,
     on_query/3,
-    is_buffer_supported/0
+    is_buffer_supported/0,
+    on_batch_query/3
 ]).
 
 %% callbacks for ecpool_worker
@@ -36,159 +36,6 @@
 
 roots() ->
     [{config, #{type => hoconsc:ref(?MODULE, config)}}].
-
-% -define(RESOURCE_CONFIG_SPEC, #{
-%         server => #{
-%             order => 1,
-%             type => string,
-%             required => true,
-%             default => <<"127.0.0.1:5672">>,
-%             title => #{en => <<"RabbitMQ Server">>,
-%                        zh => <<"RabbitMQ 服务器"/utf8>>},
-%             description => #{en => <<"RabbitMQ Server">>,
-%                              zh => <<"RabbitMQ 服务器地址"/utf8>>}
-%         },
-%         pool_size => #{
-%             order => 3,
-%             type => number,
-%             required => true,
-%             default => 8,
-%             title => #{en => <<"Pool Size">>, zh => <<"连接池大小"/utf8>>},
-%             description => #{en => <<"Size of RabbitMQ connection pool">>,
-%                              zh => <<"RabbitMQ 连接池大小"/utf8>>}
-%         },
-%         username => #{
-%             order => 4,
-%             type => string,
-%             default => <<"guest">>,
-%             title => #{en => <<"Username">>, zh => <<"用户名"/utf8>>},
-%             description => #{en => <<"RabbitMQ Username">>,
-%                              zh => <<"RabbitMQ 用户名"/utf8>>}
-%         },
-%         password => #{
-%             order => 5,
-%             type => password,
-%             default => <<"guest">>,
-%             title => #{en => <<"Password">>, zh => <<"密码"/utf8>>},
-%             description => #{en => <<"RabbitMQ Password">>,
-%                              zh => <<"RabbitMQ 密码"/utf8>>}
-%         },
-%         timeout => #{
-%             order => 6,
-%             type => string,
-%             default => <<"5s">>,
-%             title => #{en => <<"Connection Timeout">>, zh => <<"连接超时时间"/utf8>>},
-%             description => #{en => <<"Connection timeout for connecting to RabbitMQ">>,
-%                              zh => <<"RabbitMQ 连接超时时间"/utf8>>}
-%         },
-%         virtual_host => #{
-%             order => 7,
-%             type => string,
-%             default => <<"/">>,
-%             title => #{en => <<"Virtual Host">>, zh => <<"虚拟主机"/utf8>>},
-%             description => #{en => <<"Virtual host for connecting to RabbitMQ">>,
-%                              zh => <<"RabbitMQ 虚拟主机"/utf8>>}
-%         },
-%         heartbeat => #{
-%             order => 8,
-%             type => string,
-%             default => <<"30s">>,
-%             title => #{en => <<"Heartbeart">>, zh => <<"心跳间隔"/utf8>>},
-%             description => #{en => <<"Heartbeat for connecting to RabbitMQ">>,
-%                              zh => <<"RabbitMQ 心跳间隔"/utf8>>}
-%         },
-%         auto_reconnect => #{
-%             order => 9,
-%             type => string,
-%             default => <<"2s">>,
-%             title => #{en => <<"Auto Reconnect Times">>, zh => <<"自动重连间隔"/utf8>>},
-%             description => #{en => <<"Auto Reconnect Times for connecting to RabbitMQ">>,
-%                              zh => <<"RabbitMQ 自动重连间隔"/utf8>>}
-%         }
-%     }).
-
-% -define(ACTION_PARAM_RESOURCE, #{
-%                 type => string,
-%                 required => true,
-%                 title => #{en => <<"Resource ID">>, zh => <<"资源 ID"/utf8>>},
-%                 description => #{
-%                     en => <<"Bind a resource to this action">>,
-%                     zh => <<"给动作绑定一个资源"/utf8>>
-%                 }
-%             }).
-
-% -resource_type(#{
-%         name => ?RESOURCE_TYPE_RABBIT,
-%         create => on_resource_create,
-%         status => on_get_resource_status,
-%         destroy => on_resource_destroy,
-%         params => ?RESOURCE_CONFIG_SPEC,
-%         title => #{en => <<"RabbitMQ">>, zh => <<"RabbitMQ"/utf8>>},
-%         description => #{en => <<"RabbitMQ Resource">>, zh => <<"RabbitMQ 资源"/utf8>>}
-%     }).
-
-% -rule_action(#{
-%         name => data_to_rabbit,
-%         category => data_forward,
-%         for => '$any',
-%         types => [?RESOURCE_TYPE_RABBIT],
-%         create => on_action_create_data_to_rabbit,
-%         params => #{
-%             '$resource' => ?ACTION_PARAM_RESOURCE,
-%             exchange => #{
-%                 order => 1,
-%                 type => string,
-%                 default => <<"messages">>,
-%                 required => true,
-%                 title => #{en => <<"RabbitMQ Exchange">>, zh => <<"RabbitMQ Exchange"/utf8>>},
-%                 description => #{en => <<"RabbitMQ Exchange">>,
-%                 zh => <<"RabbitMQ Exchange"/utf8>>}
-%             },
-%             exchange_type => #{
-%                 order => 2,
-%                 type => string,
-%                 default => <<"topic">>,
-%                 required => true,
-%                 enum => [<<"direct">>, <<"fanout">>, <<"topic">>],
-%                 title => #{en => <<"RabbitMQ Exchange Type">>, zh => <<"RabbitMQ Exchange Type"/utf8>>},
-%                 description => #{en => <<"RabbitMQ Exchange Type">>,
-%                 zh => <<"RabbitMQ Exchange 类型"/utf8>>}
-%             },
-%             routing_key => #{
-%                 order => 3,
-%                 type => string,
-%                 required => true,
-%                 title => #{en => <<"RabbitMQ Routing Key">>, zh => <<"Rabbit Routing Key"/utf8>>},
-%                 description => #{en => <<"RabbitMQ Routing Key">>,
-%                                  zh => <<"Rabbit Routing Key"/utf8>>}
-%             },
-%             durable => #{
-%                 order => 4,
-%                 type => boolean,
-%                 default => false,
-%                 title => #{en => <<"RabbitMQ Exchange Durable">>, zh => <<"RabbitMQ Exchange Durable"/utf8>>},
-%                 description => #{en => <<"RabbitMQ Exchange Durable">>,
-%                                  zh => <<"RabbitMQ Exchange Durable"/utf8>>}
-%             },
-%             payload_tmpl => #{
-%                  order => 5,
-%                  type => string,
-%                  input => textarea,
-%                  required => false,
-%                  default => <<"">>,
-%                  title => #{en => <<"Payload Template">>,
-%                             zh => <<"消息内容模板"/utf8>>},
-%                  description => #{en => <<"The payload template, variable interpolation is supported. If using empty template (default), then the payload will be all the available vars in JSON format">>,
-%                                   zh => <<"消息内容模板，支持变量。若使用空模板（默认），消息内容为 JSON 格式的所有字段"/utf8>>}
-%              }
-%         },
-%         title => #{
-%             en => <<"Data bridge to RabbitMQ">>,
-%             zh => <<"桥接数据到 RabbitMQ"/utf8>>
-%         },
-%         description => #{en => <<"Store Data to RabbitMQ">>,
-%                          zh => <<"桥接数据到 RabbitMQ"/utf8>>}
-%     }).
 
 fields(config) ->
     [
@@ -246,6 +93,25 @@ fields(config) ->
                     desc => ?DESC("timeout")
                 }
             )},
+        {wait_for_publish_confirmations,
+            hoconsc:mk(
+                boolean(),
+                #{
+                    required => true,
+                    default => true,
+                    desc => ?DESC("wait_for_publish_confirmations")
+                }
+            )},
+        {publish_confirmation_timeout,
+            hoconsc:mk(
+                emqx_schema:duration_ms(),
+                #{
+                    default => <<"30s">>,
+                    required => true,
+                    desc => ?DESC("timeout")
+                }
+            )},
+
         {virtual_host,
             hoconsc:mk(
                 typerefl:binary(),
@@ -283,15 +149,16 @@ fields(config) ->
                     desc => ?DESC("exchange")
                 }
             )},
-        {exchange_type,
-            hoconsc:mk(
-                hoconsc:enum([direct, fanout, topic]),
-                #{
-                    default => <<"topic">>,
-                    required => true,
-                    desc => ?DESC("exchange_type")
-                }
-            )},
+        %% Needed?
+        % {exchange_type,
+        %     hoconsc:mk(
+        %         hoconsc:enum([direct, fanout, topic]),
+        %         #{
+        %             default => <<"topic">>,
+        %             required => true,
+        %             desc => ?DESC("exchange_type")
+        %         }
+        %     )},
         {routing_key,
             hoconsc:mk(
                 typerefl:binary(),
@@ -301,13 +168,13 @@ fields(config) ->
                     desc => ?DESC("routing_key")
                 }
             )},
-        {durable,
+        {delivery_mode,
             hoconsc:mk(
-                hoconsc:enum([true, false]),
+                hoconsc:enum([1, 2]),
                 #{
-                    default => false,
+                    default => 1,
                     required => true,
-                    desc => ?DESC("durable")
+                    desc => ?DESC("delivery_mode")
                 }
             )},
         {payload_template,
@@ -432,7 +299,8 @@ connect(Options) ->
         password := Password,
         timeout := Timeout,
         virtual_host := VirtualHost,
-        heartbeat := Heartbeat
+        heartbeat := Heartbeat,
+        wait_for_publish_confirmations := WaitForPublishConfirmations
     } = Config,
     %XX {auto_reconnect => 2000,
     %XX  durable => false,
@@ -460,6 +328,11 @@ connect(Options) ->
         },
     {ok, RabbitMQConnection} = amqp_connection:start(RabbitMQConnectionOptions),
     {ok, RabbitMQChannel} = amqp_connection:open_channel(RabbitMQConnection),
+    %% We want to get confirmations from the server that the messages were received
+    case WaitForPublishConfirmations of
+        true -> #'confirm.select_ok'{} = amqp_channel:call(RabbitMQChannel, #'confirm.select'{});
+        false -> ok
+    end,
     {ok,
         #{
             connection => RabbitMQConnection,
@@ -521,7 +394,10 @@ on_query(
     #{
         exchange := Exchange,
         %exchange_type := ExchangeType,
-        routing_key := RoutingKey
+        routing_key := RoutingKey,
+        delivery_mode := DeliveryMode,
+        wait_for_publish_confirmations := WaitForPublishConfirmations,
+        publish_confirmation_timeout := PublishConfirmationTimeout
     } = Config,
     erlang:display({on_query, ResourceID, RequestType, Data, State}),
     try
@@ -529,15 +405,21 @@ on_query(
             exchange = Exchange,
             routing_key = RoutingKey
         },
+        erlang:display({xxx_delivery_mode, DeliveryMode}),
         AmqpMsg = #amqp_msg{
-            props = #'P_basic'{headers = []},
+            props = #'P_basic'{headers = [], delivery_mode = DeliveryMode},
             payload = format_data(PayloadTemplate, Data)
         },
         ecpool:with_client(PoolName, fun(#{channel := Channel}) ->
             %% On query
             erlang:display({xxx_on_query, Channel, Method, AmqpMsg}),
-            ok = amqp_channel:cast(Channel, Method, AmqpMsg)
-        %%true = amqp_channel:wait_for_confirms(Channel, 1000)
+            ok = amqp_channel:cast(Channel, Method, AmqpMsg),
+            erlang:display({sent_xxx_on_query2, Channel, Method, AmqpMsg}),
+            case WaitForPublishConfirmations of
+                true -> true = amqp_channel:wait_for_confirms(Channel, PublishConfirmationTimeout);
+                false -> ok
+            end,
+            erlang:display({xxx_done_wait_for_confirms})
         end)
     catch
         W:E:S ->
@@ -557,6 +439,85 @@ on_query(
 % SQL = get_sql(SimplifiedRequestType, Templates, DataOrSQL),
 % ClickhouseResult = execute_sql_in_clickhouse_server(PoolName, SQL),
 % transform_and_log_clickhouse_result(ClickhouseResult, ResourceID, SQL).
+
+on_batch_query(
+    _ResourceID,
+    BatchReq,
+    State
+) ->
+    try
+        erlang:display({xxx_do_batch}),
+        %% Currently we only support batch requests with the send_message key
+        {Keys, MessagesToInsert} = lists:unzip(BatchReq),
+        ensure_keys_are_of_type_send_message(Keys),
+        %% Pick out the SQL template
+        #{
+            processed_payload_template := PayloadTemplate,
+            poolname := PoolName,
+            config := Config
+        } = State,
+        %% Create batch insert SQL statement
+        FormattedMessages = [
+            format_data(PayloadTemplate, Data)
+         || Data <- MessagesToInsert
+        ],
+        ecpool:with_client(PoolName, fun(#{channel := Channel}) ->
+            erlang:display({xxx_before}),
+            publish_messages(Channel, Config, FormattedMessages),
+            erlang:display({xxx_after})
+        end)
+    catch
+        W:E:S ->
+            erlang:display({on_query_error, W, E, S}),
+            erlang:error({error, W, E, S})
+    end,
+    ok.
+
+ensure_keys_are_of_type_send_message(Keys) ->
+    case lists:all(fun is_send_message_atom/1, Keys) of
+        true ->
+            ok;
+        false ->
+            erlang:error(
+                {unrecoverable_error,
+                    <<"Unexpected type for batch message (Expected send_message)">>}
+            )
+    end.
+
+publish_messages(
+    Channel,
+    #{
+        delivery_mode := DeliveryMode,
+        routing_key := RoutingKey,
+        exchange := Exchange,
+        wait_for_publish_confirmations := WaitForPublishConfirmations,
+        publish_confirmation_timeout := PublishConfirmationTimeout
+    } = _Config,
+    Messages
+) ->
+    MessageProperties = #'P_basic'{headers = [], delivery_mode = DeliveryMode},
+    [
+        amqp_channel:cast(
+            Channel,
+            #'basic.publish'{
+                exchange = Exchange,
+                routing_key = RoutingKey
+            },
+            #amqp_msg{payload = Message, props = MessageProperties}
+        )
+     || Message <- Messages
+    ],
+    erlang:display({xxx_sent_batch}),
+    case WaitForPublishConfirmations of
+        true -> true = amqp_channel:wait_for_confirms(Channel, PublishConfirmationTimeout);
+        false -> ok
+    end,
+    erlang:display({xxx_sent_batch_done}).
+
+is_send_message_atom(send_message) ->
+    true;
+is_send_message_atom(_) ->
+    false.
 
 format_data([], Msg) ->
     emqx_utils_json:encode(Msg);
