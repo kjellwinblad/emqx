@@ -6,12 +6,14 @@
 -include_lib("emqx/include/logger.hrl").
 -include_lib("hocon/include/hoconsc.hrl").
 -include_lib("snabbkaffe/include/snabbkaffe.hrl").
+
 %% Needed to create connection
 -include_lib("amqp_client/include/amqp_client.hrl").
 
 -behaviour(emqx_resource).
 -behaviour(hocon_schema).
 -behaviour(ecpool_worker).
+
 %% hocon_schema callbacks
 -export([roots/0, fields/1]).
 
@@ -35,7 +37,6 @@
 -export([connect/1]).
 
 %% Internal callbacks
-
 -export([publish_messages/3]).
 
 roots() ->
@@ -283,23 +284,20 @@ on_stop(
     ],
     %% We need to stop the pool before stopping the workers as the pool monitors the workers
     StopResult = emqx_plugin_libs_pool:stop_pool(PoolName),
-    [
+    _ = [
         stop_worker(Client)
      || Client <- Clients
     ],
     StopResult.
 
-stop_worker(#{
-    channel := Channel,
-    connection := Connection
-}) ->
+stop_worker({Channel, Connection}) ->
     amqp_channel:close(Channel),
     amqp_connection:close(Connection).
 
 %% This is the callback function that is called by ecpool when the pool is
 %% started
 
--spec connect(term()) -> {ok, term()} | {error, term()}.
+-spec connect(term()) -> {ok, {pid(), pid()}, map()} | {error, term()}.
 
 connect(Options) ->
     Config = proplists:get_value(config, Options),
@@ -378,17 +376,14 @@ create_rabbitmq_connection_and_channel(Config) ->
         false ->
             ok
     end,
-    {ok,
-        #{
-            connection => RabbitMQConnection,
-            channel => RabbitMQChannel
-        },
-        #{supervisees => [RabbitMQConnection, RabbitMQChannel]}}.
+    {ok, {RabbitMQConnection, RabbitMQChannel}, #{
+        supervisees => [RabbitMQConnection, RabbitMQChannel]
+    }}.
 
 %% emqx_resource callback called to check the status of the resource
 
 -spec on_get_status(resource_id(), term()) ->
-    {connected, term()} | {disconnect, term(), binary()}.
+    {connected, term()} | {disconnected, term(), binary()}.
 
 on_get_status(
     _InstId,
@@ -413,7 +408,7 @@ on_get_status(
         true ->
             {connected, State};
         false ->
-            {disconnect, State, <<"not_connected">>}
+            {disconnected, State, <<"not_connected">>}
     end;
 on_get_status(
     _InstId,
@@ -421,10 +416,7 @@ on_get_status(
 ) ->
     {disconnect, State, <<"not_connected: no connection pool in state">>}.
 
-check_worker(#{
-    channel := Channel,
-    connection := Connection
-}) ->
+check_worker({Channel, Connection}) ->
     erlang:is_process_alive(Channel) andalso erlang:is_process_alive(Connection).
 
 %% emqx_resource callback that is called when a non-batch query is received
@@ -495,7 +487,7 @@ on_batch_query(
     ).
 
 publish_messages(
-    #{channel := Channel},
+    {_Connection, Channel},
     #{
         delivery_mode := DeliveryMode,
         routing_key := RoutingKey,
@@ -513,7 +505,7 @@ publish_messages(
         exchange = Exchange,
         routing_key = RoutingKey
     },
-    [
+    _ = [
         amqp_channel:cast(
             Channel,
             Method,
