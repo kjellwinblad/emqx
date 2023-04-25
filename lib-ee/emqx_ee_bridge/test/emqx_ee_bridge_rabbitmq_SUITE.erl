@@ -17,7 +17,7 @@
 %% run this without bringing up the whole CI infrastucture
 
 rabbit_mq_host() ->
-    <<"localhost">>.
+    <<"rabbitmq">>.
 
 rabbit_mq_port() ->
     5672.
@@ -39,7 +39,7 @@ get_channel_connection(Config) ->
 %%------------------------------------------------------------------------------
 
 init_per_suite(Config) ->
-    snabbkaffe:fix_ct_logging(),
+    % snabbkaffe:fix_ct_logging(),
     case
         emqx_common_test_helpers:is_tcp_server_available(
             erlang:binary_to_list(rabbit_mq_host()), rabbit_mq_port()
@@ -137,7 +137,6 @@ rabbitmq_config(Config) ->
     Server = maps:get(server, Config, rabbit_mq_host()),
     Port = maps:get(port, Config, rabbit_mq_port()),
     Template = maps:get(payload_template, Config, <<"">>),
-    erlang:display({xxxx, Template}),
     ConfigString =
         io_lib:format(
             "bridges.rabbitmq.~s {\n"
@@ -210,11 +209,6 @@ t_make_delete_bridge(_Config) ->
                 false
         end,
     true = lists:any(IsRightName, Bridges),
-    BridgeConfig = #{
-        <<"name">> => Name,
-        <<"type">> => <<"rabbitmq">>
-    },
-    % ?assertMatch(ok, bridges_probe_http(BridgeConfig)),
     delete_bridge(),
     BridgesAfterDelete = emqx_bridge:list(),
     false = lists:any(IsRightName, BridgesAfterDelete),
@@ -233,11 +227,6 @@ t_make_delete_bridge_non_existing_server(_Config) ->
                 false
         end,
     true = lists:any(IsRightName, Bridges),
-    BridgeConfig = #{
-        <<"name">> => Name,
-        <<"type">> => <<"rabbitmq">>
-    },
-    ?assertMatch({error, _}, bridges_probe_http(BridgeConfig)),
     delete_bridge(),
     BridgesAfterDelete = emqx_bridge:list(),
     false = lists:any(IsRightName, BridgesAfterDelete),
@@ -264,15 +253,12 @@ t_send_message_query_with_template(Config) ->
         <<"data">> => <<"RabbitMQ">>,
         <<"timestamp">> => 10000
     },
-    %% This will use the SQL template included in the bridge
     emqx_bridge:send_message(BridgeID, Payload),
     %% Check that the data got to the database
     ExpectedResult = Payload#{
         <<"secret">> => 42
     },
-    Got = receive_simple_test_message(Config),
-    erlang:display({expectedResult, Got}),
-    ExpectedResult = Got,
+    ExpectedResult = receive_simple_test_message(Config),
     delete_bridge(),
     ok.
 
@@ -283,11 +269,31 @@ t_send_simple_batch(Config) ->
             enable_batch => true
         },
     BridgeID = make_bridge(BridgeConf),
-    Key = 42,
-    Payload = #{<<"key">> => Key, <<"data">> => <<"RabbitMQ">>, <<"timestamp">> => 10000},
-    %% This will use the SQL template included in the bridge
+    Payload = #{<<"key">> => 42, <<"data">> => <<"RabbitMQ">>, <<"timestamp">> => 10000},
     emqx_bridge:send_message(BridgeID, Payload),
     Payload = receive_simple_test_message(Config),
+    delete_bridge(),
+    ok.
+
+t_send_simple_batch_with_template(Config) ->
+    BridgeConf =
+        #{
+            batch_size => 100,
+            enable_batch => true,
+            payload_template =>
+                <<"{\\\"key\\\": ${key}, \\\"data\\\": \\\"${data}\\\", \\\"timestamp\\\": ${timestamp}, \\\"secret\\\": 42}">>
+        },
+    BridgeID = make_bridge(BridgeConf),
+    Payload = #{
+        <<"key">> => 7,
+        <<"data">> => <<"RabbitMQ">>,
+        <<"timestamp">> => 10000
+    },
+    emqx_bridge:send_message(BridgeID, Payload),
+    ExpectedResult = Payload#{
+        <<"secret">> => 42
+    },
+    ExpectedResult = receive_simple_test_message(Config),
     delete_bridge(),
     ok.
 
@@ -340,7 +346,6 @@ receive_simple_test_message(Config) ->
             %% Cancel the consumer
             #'basic.cancel_ok'{consumer_tag = ConsumerTag} =
                 amqp_channel:call(Channel, #'basic.cancel'{consumer_tag = ConsumerTag}),
-            erlang:display({xxx_content, Content#amqp_msg.payload}),
             emqx_utils_json:decode(Content#amqp_msg.payload)
     end.
 
@@ -356,11 +361,3 @@ rabbitmq_config() ->
 
 test_data() ->
     #{<<"msg_field">> => <<"Hello">>}.
-
-bridges_probe_http(Params) ->
-    Path = emqx_mgmt_api_test_util:api_path(["bridges_probe"]),
-    AuthHeader = emqx_mgmt_api_test_util:auth_header_(),
-    case emqx_mgmt_api_test_util:request_api(post, Path, "", AuthHeader, Params) of
-        {ok, _} -> ok;
-        Error -> Error
-    end.

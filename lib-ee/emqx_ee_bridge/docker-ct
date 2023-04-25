@@ -11,3 +11,4 @@ clickhouse
 dynamo
 rocketmq
 sqlserver
+rabbitmq

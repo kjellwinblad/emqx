@@ -205,11 +205,19 @@ values(_) ->
 %% Callbacks defined in emqx_resource
 %% ===================================================================
 
+%% emqx_resource callback
+
 callback_mode() -> always_sync.
+
+-spec is_buffer_supported() -> boolean().
+
+%% emqx_resource callback
 
 is_buffer_supported() ->
     %% We want to make use of EMQX's buffer mechanism
     false.
+
+%% emqx_resource callback called when the resource is started
 
 -spec on_start(resource_id(), term()) -> {ok, term()} | {error, _}.
 
@@ -253,9 +261,13 @@ on_start(
             {error, Reason}
     end.
 
+%% emqx_resource callback called when the resource is stopped
+
+-spec on_stop(resource_id(), resource_state()) -> term().
+
 on_stop(
     ResourceID,
-    #{poolname := PoolName}
+    #{poolname := PoolName} = _State
 ) ->
     ?SLOG(info, #{
         msg => "stopping RabbitMQ connector",
@@ -283,6 +295,11 @@ stop_worker(#{
 }) ->
     amqp_channel:close(Channel),
     amqp_connection:close(Connection).
+
+%% This is the callback function that is called by ecpool when the pool is
+%% started
+
+-spec connect(term()) -> {ok, term()} | {error, term()}.
 
 connect(Options) ->
     Config = proplists:get_value(config, Options),
@@ -368,18 +385,17 @@ create_rabbitmq_connection_and_channel(Config) ->
         },
         #{supervisees => [RabbitMQConnection, RabbitMQChannel]}}.
 
-on_get_status(
-    _InstId,
-    State
-) ->
-    {disconnect, State, <<"not_connected: no connection pool in state">>};
+%% emqx_resource callback called to check the status of the resource
+
+-spec on_get_status(resource_id(), term()) ->
+    {connected, term()} | {disconnect, term(), binary()}.
+
 on_get_status(
     _InstId,
     #{
         poolname := PoolName
     } = State
 ) ->
-    erlang:display({xxx_on_get_status}),
     Workers = [Worker || {_WorkerName, Worker} <- ecpool:workers(PoolName)],
     Clients = [
         begin
@@ -395,18 +411,28 @@ on_get_status(
     Connected = length(CheckResults) > 0 andalso lists:all(fun(R) -> R end, CheckResults),
     case Connected of
         true ->
-            erlang:display({xxx_return_connected}),
             {connected, State};
         false ->
-            erlang:display({xxx_return_not_connected}),
             {disconnect, State, <<"not_connected">>}
-    end.
+    end;
+on_get_status(
+    _InstId,
+    State
+) ->
+    {disconnect, State, <<"not_connected: no connection pool in state">>}.
 
 check_worker(#{
     channel := Channel,
     connection := Connection
 }) ->
     erlang:is_process_alive(Channel) andalso erlang:is_process_alive(Connection).
+
+%% emqx_resource callback that is called when a non-batch query is received
+
+-spec on_query(resource_id(), Request, resource_state()) -> query_result() when
+    Request :: {RequestType, Data},
+    RequestType :: send_message,
+    Data :: map().
 
 on_query(
     ResourceID,
@@ -430,6 +456,11 @@ on_query(
         {?MODULE, publish_messages, [Config, [MessageData]]},
         no_handover
     ).
+
+%% emqx_resource callback that is called when a batch query is received
+
+-spec on_batch_query(resource_id(), BatchReq, resource_state()) -> query_result() when
+    BatchReq :: nonempty_list({'send_message', map()}).
 
 on_batch_query(
     ResourceID,

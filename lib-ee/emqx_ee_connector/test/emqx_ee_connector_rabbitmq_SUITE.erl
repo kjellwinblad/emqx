@@ -32,7 +32,7 @@
 %% docker run -it --rm --name rabbitmq -p 127.0.0.1:5672:5672 -p 127.0.0.1:15672:15672 rabbitmq:3.11-management
 
 rabbit_mq_host() ->
-    <<"localhost">>.
+    <<"rabbitmq">>.
 
 rabbit_mq_port() ->
     5672.
@@ -96,7 +96,6 @@ setup_rabbit_mq_exchange_and_queue() ->
             #'queue.declare'{queue = rabbit_mq_queue()}
         ),
     %% Bind the queue to the exchange
-    RoutingKey = rabbit_mq_routing_key(),
     #'queue.bind_ok'{} =
         amqp_channel:call(
             Channel,
@@ -140,7 +139,6 @@ t_lifecycle(Config) ->
 
 perform_lifecycle_check(ResourceID, InitialConfig, TestConfig) ->
     #{
-        connection := Connection,
         channel := Channel
     } = get_channel_connection(TestConfig),
     {ok, #{config := CheckedConfig}} =
@@ -205,8 +203,7 @@ perform_query(PoolName, Channel) ->
     ok = receive_simple_test_message(Channel).
 
 receive_simple_test_message(Channel) ->
-    What =
-        #'basic.consume_ok'{consumer_tag = ConsumerTag} =
+    #'basic.consume_ok'{consumer_tag = ConsumerTag} =
         amqp_channel:call(
             Channel,
             #'basic.consume'{
