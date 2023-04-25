@@ -53,7 +53,6 @@ init([]) ->
     {ok, {SupFlags, ChildSpecs}}.
 
 start_workers(ResId, Opts) ->
-    erlang:display({start_workers, ResId, Opts}),
     WorkerPoolSize = worker_pool_size(Opts),
     _ = ensure_worker_pool(ResId, hash, [{size, WorkerPoolSize}]),
     lists:foreach(
@@ -117,7 +116,6 @@ ensure_worker_started(ResId, Idx, Opts) ->
         type => worker,
         modules => [Mod]
     },
-    erlang:display({start_child, Spec}),
     case supervisor:start_child(?SERVER, Spec) of
         {ok, _Pid} -> ok;
         {error, {already_started, _}} -> ok;

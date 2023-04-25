@@ -1,4 +1,4 @@
-%%--------------------------------------------------------------------
+%--------------------------------------------------------------------
 %% Copyright (c) 2022-2023 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%--------------------------------------------------------------------
 
@@ -39,6 +39,7 @@ get_channel_connection(Config) ->
 %%------------------------------------------------------------------------------
 
 init_per_suite(Config) ->
+    snabbkaffe:fix_ct_logging(),
     case
         emqx_common_test_helpers:is_tcp_server_available(
             erlang:binary_to_list(rabbit_mq_host()), rabbit_mq_port()
@@ -52,6 +53,7 @@ init_per_suite(Config) ->
             {ok, _} = application:ensure_all_started(emqx_ee_connector),
             {ok, _} = application:ensure_all_started(emqx_ee_bridge),
             {ok, _} = application:ensure_all_started(amqp_client),
+            emqx_mgmt_api_test_util:init_suite(),
             ChannelConnection = setup_rabbit_mq_exchange_and_queue(),
             [{channel_connection, ChannelConnection} | Config];
         false ->
@@ -87,7 +89,6 @@ setup_rabbit_mq_exchange_and_queue() ->
             #'queue.declare'{queue = rabbit_mq_queue()}
         ),
     %% Bind the queue to the exchange
-    RoutingKey = rabbit_mq_routing_key(),
     #'queue.bind_ok'{} =
         amqp_channel:call(
             Channel,
@@ -107,6 +108,7 @@ end_per_suite(Config) ->
         connection := Connection,
         channel := Channel
     } = get_channel_connection(Config),
+    emqx_mgmt_api_test_util:end_suite(),
     ok = emqx_common_test_helpers:stop_apps([emqx_conf]),
     ok = emqx_connector_test_helpers:stop_apps([emqx_resource]),
     _ = application:stop(emqx_connector),
@@ -120,7 +122,7 @@ end_per_suite(Config) ->
 init_per_testcase(_, Config) ->
     Config.
 
-end_per_testcase(_, Config) ->
+end_per_testcase(_, _Config) ->
     ok.
 
 all() ->
@@ -132,8 +134,10 @@ rabbitmq_config(Config) ->
     BatchTime = maps:get(batch_time_ms, Config, 0),
     EnableBatch = maps:get(enable_batch, Config, true),
     Name = atom_to_binary(?MODULE),
-    Server = rabbit_mq_host(),
-    Port = rabbit_mq_port(),
+    Server = maps:get(server, Config, rabbit_mq_host()),
+    Port = maps:get(port, Config, rabbit_mq_port()),
+    Template = maps:get(payload_template, Config, <<"">>),
+    erlang:display({xxxx, Template}),
     ConfigString =
         io_lib:format(
             "bridges.rabbitmq.~s {\n"
@@ -143,6 +147,8 @@ rabbitmq_config(Config) ->
             "  username = \"guest\"\n"
             "  password = \"guest\"\n"
             "  routing_key = \"~s\"\n"
+            "  exchange = \"~s\"\n"
+            "  payload_template = \"~s\"\n"
             "  resource_opts = {\n"
             "    enable_batch = ~w\n"
             "    batch_size = ~b\n"
@@ -154,6 +160,8 @@ rabbitmq_config(Config) ->
                 Server,
                 Port,
                 rabbit_mq_routing_key(),
+                rabbit_mq_exchange(),
+                Template,
                 EnableBatch,
                 BatchSize,
                 BatchTime
@@ -202,6 +210,34 @@ t_make_delete_bridge(_Config) ->
                 false
         end,
     true = lists:any(IsRightName, Bridges),
+    BridgeConfig = #{
+        <<"name">> => Name,
+        <<"type">> => <<"rabbitmq">>
+    },
+    % ?assertMatch(ok, bridges_probe_http(BridgeConfig)),
+    delete_bridge(),
+    BridgesAfterDelete = emqx_bridge:list(),
+    false = lists:any(IsRightName, BridgesAfterDelete),
+    ok.
+
+t_make_delete_bridge_non_existing_server(_Config) ->
+    make_bridge(#{server => <<"non_existing_server">>, port => 3174}),
+    %% Check that the new brige is in the list of bridges
+    Bridges = emqx_bridge:list(),
+    Name = atom_to_binary(?MODULE),
+    IsRightName =
+        fun
+            (#{name := BName}) when BName =:= Name ->
+                true;
+            (_) ->
+                false
+        end,
+    true = lists:any(IsRightName, Bridges),
+    BridgeConfig = #{
+        <<"name">> => Name,
+        <<"type">> => <<"rabbitmq">>
+    },
+    ?assertMatch({error, _}, bridges_probe_http(BridgeConfig)),
     delete_bridge(),
     BridgesAfterDelete = emqx_bridge:list(),
     false = lists:any(IsRightName, BridgesAfterDelete),
@@ -209,15 +245,34 @@ t_make_delete_bridge(_Config) ->
 
 t_send_message_query(Config) ->
     BridgeID = make_bridge(#{enable_batch => false}),
-    Key = 42,
-    Payload = #{<<"key">> => Key, <<"data">> => <<"RabbitMQ">>, <<"timestamp">> => 10000},
+    Payload = #{<<"key">> => 42, <<"data">> => <<"RabbitMQ">>, <<"timestamp">> => 10000},
     %% This will use the SQL template included in the bridge
     emqx_bridge:send_message(BridgeID, Payload),
     %% Check that the data got to the database
-    %% TODO
-    Payload2 = receive_simple_test_message(Config),
-    erlang:display({xxxxx, Payload2, Payload}),
-    Payload2 = Payload,
+    Payload = receive_simple_test_message(Config),
+    delete_bridge(),
+    ok.
+
+t_send_message_query_with_template(Config) ->
+    BridgeID = make_bridge(#{
+        enable_batch => false,
+        payload_template =>
+            <<"{\\\"key\\\": ${key}, \\\"data\\\": \\\"${data}\\\", \\\"timestamp\\\": ${timestamp}, \\\"secret\\\": 42}">>
+    }),
+    Payload = #{
+        <<"key">> => 7,
+        <<"data">> => <<"RabbitMQ">>,
+        <<"timestamp">> => 10000
+    },
+    %% This will use the SQL template included in the bridge
+    emqx_bridge:send_message(BridgeID, Payload),
+    %% Check that the data got to the database
+    ExpectedResult = Payload#{
+        <<"secret">> => 42
+    },
+    Got = receive_simple_test_message(Config),
+    erlang:display({expectedResult, Got}),
+    ExpectedResult = Got,
     delete_bridge(),
     ok.
 
@@ -237,9 +292,9 @@ t_send_simple_batch(Config) ->
     ok.
 
 t_heavy_batching(Config) ->
-    NumberOfMessages = 4,
+    NumberOfMessages = 20000,
     BridgeConf = #{
-        batch_size => 2,
+        batch_size => 10173,
         batch_time_ms => 50,
         enable_batch => true
     },
@@ -254,7 +309,6 @@ t_heavy_batching(Config) ->
     AllMessages = lists:foldl(
         fun(_, Acc) ->
             Message = receive_simple_test_message(Config),
-            erlang:display({xxx_message, Message}),
             #{<<"key">> := Key} = Message,
             Acc#{Key => true}
         end,
@@ -267,8 +321,7 @@ t_heavy_batching(Config) ->
 
 receive_simple_test_message(Config) ->
     #{channel := Channel} = get_channel_connection(Config),
-    What =
-        #'basic.consume_ok'{consumer_tag = ConsumerTag} =
+    #'basic.consume_ok'{consumer_tag = ConsumerTag} =
         amqp_channel:call(
             Channel,
             #'basic.consume'{
@@ -280,7 +333,6 @@ receive_simple_test_message(Config) ->
         #'basic.consume_ok'{} ->
             ok
     end,
-    erlang:display({xxx_wait_for_message}),
     receive
         {#'basic.deliver'{delivery_tag = DeliveryTag}, Content} ->
             %% Ack the message
@@ -288,6 +340,7 @@ receive_simple_test_message(Config) ->
             %% Cancel the consumer
             #'basic.cancel_ok'{consumer_tag = ConsumerTag} =
                 amqp_channel:call(Channel, #'basic.cancel'{consumer_tag = ConsumerTag}),
+            erlang:display({xxx_content, Content#amqp_msg.payload}),
             emqx_utils_json:decode(Content#amqp_msg.payload)
     end.
 
@@ -303,3 +356,11 @@ rabbitmq_config() ->
 
 test_data() ->
     #{<<"msg_field">> => <<"Hello">>}.
+
+bridges_probe_http(Params) ->
+    Path = emqx_mgmt_api_test_util:api_path(["bridges_probe"]),
+    AuthHeader = emqx_mgmt_api_test_util:auth_header_(),
+    case emqx_mgmt_api_test_util:request_api(post, Path, "", AuthHeader, Params) of
+        {ok, _} -> ok;
+        Error -> Error
+    end.

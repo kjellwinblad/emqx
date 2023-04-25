@@ -34,6 +34,10 @@
 %% callbacks for ecpool_worker
 -export([connect/1]).
 
+%% Internal callbacks
+
+-export([publish_messages/3]).
+
 roots() ->
     [{config, #{type => hoconsc:ref(?MODULE, config)}}].
 
@@ -149,16 +153,6 @@ fields(config) ->
                     desc => ?DESC("exchange")
                 }
             )},
-        %% Needed?
-        % {exchange_type,
-        %     hoconsc:mk(
-        %         hoconsc:enum([direct, fanout, topic]),
-        %         #{
-        %             default => <<"topic">>,
-        %             required => true,
-        %             desc => ?DESC("exchange_type")
-        %         }
-        %     )},
         {routing_key,
             hoconsc:mk(
                 typerefl:binary(),
@@ -194,11 +188,15 @@ values(get) ->
     values(post);
 values(put) ->
     #{
-        database => <<"mqtt">>,
+        server => <<"localhost">>,
+        port => 5672,
         enable => true,
         pool_size => 8,
-        type => clickhouse,
-        url => <<"http://127.0.0.1:8123">>
+        type => rabbitmq,
+        username => <<"guest">>,
+        password => <<"guest">>,
+        routing_key => <<"my_routing_key">>,
+        payload_template => <<"">>
     };
 values(_) ->
     #{}.
@@ -222,11 +220,10 @@ on_start(
         payload_template := PayloadTemplate
     } = Config
 ) ->
-    erlang:display({on_start, InstanceID, Config}),
     ?SLOG(info, #{
         msg => "starting_rabbitmq_connector",
         connector => InstanceID,
-        config => emqx_misc:redact(Config)
+        config => emqx_utils:redact(Config)
     }),
     PoolName = emqx_plugin_libs_pool:pool_name(InstanceID),
     Options = [
@@ -250,7 +247,7 @@ on_start(
                 #{
                     msg => "rabbitmq_connector_start_failed",
                     error_reason => Reason,
-                    config => emqx_misc:redact(Config)
+                    config => emqx_utils:redact(Config)
                 },
             ?SLOG(info, LogMessage),
             {error, Reason}
@@ -272,11 +269,8 @@ on_stop(
         end
      || Worker <- Workers
     ],
-    erlang:display({on_stopxx, ResourceID, Clients}),
     %% We need to stop the pool before stopping the workers as the pool monitors the workers
     StopResult = emqx_plugin_libs_pool:stop_pool(PoolName),
-    erlang:display({on_stop, ResourceID, StopResult}),
-    % erlang:display({on_get_status, Clients}),
     [
         stop_worker(Client)
      || Client <- Clients
@@ -292,6 +286,28 @@ stop_worker(#{
 
 connect(Options) ->
     Config = proplists:get_value(config, Options),
+    try
+        create_rabbitmq_connection_and_channel(Config)
+    catch
+        _:{error, Reason} ->
+            ?SLOG(error, #{
+                msg => "rabbitmq_connector_connection_failed",
+                error_type => error,
+                error_reason => Reason,
+                config => emqx_utils:redact(Config)
+            }),
+            {error, Reason};
+        Type:Reason ->
+            ?SLOG(error, #{
+                msg => "rabbitmq_connector_connection_failed",
+                error_type => Type,
+                error_reason => Reason,
+                config => emqx_utils:redact(Config)
+            }),
+            {error, Reason}
+    end.
+
+create_rabbitmq_connection_and_channel(Config) ->
     #{
         server := Host,
         port := Port,
@@ -302,20 +318,6 @@ connect(Options) ->
         heartbeat := Heartbeat,
         wait_for_publish_confirmations := WaitForPublishConfirmations
     } = Config,
-    %XX {auto_reconnect => 2000,
-    %XX  durable => false,
-    %XX  exchange => <<"test_exchange">>,
-    %XX  exchange_type => topic,
-    %XX  heartbeat => 30000,
-    %XX  password => <<"guest">>,
-    %XX  payload_template => <<>>,
-    %  pool_size => 8,
-    %XX  port => 5672,
-    %  routing_key => <<"test_routing_key">>,
-    %  server => <<"localhost">>,
-    %  timeout => 5000,
-    %  username => <<"guest">>,
-    %  virtual_host => <<"/">>}
     RabbitMQConnectionOptions =
         #amqp_params_network{
             host = erlang:binary_to_list(Host),
@@ -326,12 +328,38 @@ connect(Options) ->
             virtual_host = VirtualHost,
             heartbeat = Heartbeat
         },
-    {ok, RabbitMQConnection} = amqp_connection:start(RabbitMQConnectionOptions),
-    {ok, RabbitMQChannel} = amqp_connection:open_channel(RabbitMQConnection),
-    %% We want to get confirmations from the server that the messages were received
+    {ok, RabbitMQConnection} =
+        case amqp_connection:start(RabbitMQConnectionOptions) of
+            {ok, Connection} ->
+                {ok, Connection};
+            {error, Reason} ->
+                erlang:error({error, Reason})
+        end,
+    {ok, RabbitMQChannel} =
+        case amqp_connection:open_channel(RabbitMQConnection) of
+            {ok, Channel} ->
+                {ok, Channel};
+            {error, OpenChannelErrorReason} ->
+                erlang:error({error, OpenChannelErrorReason})
+        end,
+    %% We need to enable confirmations if we want to wait for them
     case WaitForPublishConfirmations of
-        true -> #'confirm.select_ok'{} = amqp_channel:call(RabbitMQChannel, #'confirm.select'{});
-        false -> ok
+        true ->
+            case amqp_channel:call(RabbitMQChannel, #'confirm.select'{}) of
+                #'confirm.select_ok'{} ->
+                    ok;
+                Error ->
+                    ConfirmModeErrorReason =
+                        erlang:iolist_to_binary(
+                            io_lib:format(
+                                "Could not enable RabbitMQ confirmation mode ~p",
+                                [Error]
+                            )
+                        ),
+                    erlang:error({error, ConfirmModeErrorReason})
+            end;
+        false ->
+            ok
     end,
     {ok,
         #{
@@ -342,11 +370,16 @@ connect(Options) ->
 
 on_get_status(
     _InstId,
+    State
+) ->
+    {disconnect, State, <<"not_connected: no connection pool in state">>};
+on_get_status(
+    _InstId,
     #{
         poolname := PoolName
     } = State
 ) ->
-    erlang:display({on_get_status, PoolName}),
+    erlang:display({xxx_on_get_status}),
     Workers = [Worker || {_WorkerName, Worker} <- ecpool:workers(PoolName)],
     Clients = [
         begin
@@ -355,17 +388,17 @@ on_get_status(
         end
      || Worker <- Workers
     ],
-    erlang:display({on_get_status, Clients}),
     CheckResults = [
         check_worker(Client)
      || Client <- Clients
     ],
-    erlang:display({on_get_status2, CheckResults}),
     Connected = length(CheckResults) > 0 andalso lists:all(fun(R) -> R end, CheckResults),
     case Connected of
         true ->
+            erlang:display({xxx_return_connected}),
             {connected, State};
         false ->
+            erlang:display({xxx_return_not_connected}),
             {disconnect, State, <<"not_connected">>}
     end.
 
@@ -388,90 +421,97 @@ on_query(
         msg => "RabbitMQ connector received query",
         connector => ResourceID,
         type => RequestType,
-        sql => Data,
+        data => Data,
         state => State
     }),
-    #{
-        exchange := Exchange,
-        %exchange_type := ExchangeType,
-        routing_key := RoutingKey,
-        delivery_mode := DeliveryMode,
-        wait_for_publish_confirmations := WaitForPublishConfirmations,
-        publish_confirmation_timeout := PublishConfirmationTimeout
-    } = Config,
-    erlang:display({on_query, ResourceID, RequestType, Data, State}),
-    try
-        Method = #'basic.publish'{
-            exchange = Exchange,
-            routing_key = RoutingKey
-        },
-        erlang:display({xxx_delivery_mode, DeliveryMode}),
-        AmqpMsg = #amqp_msg{
-            props = #'P_basic'{headers = [], delivery_mode = DeliveryMode},
-            payload = format_data(PayloadTemplate, Data)
-        },
-        ecpool:with_client(PoolName, fun(#{channel := Channel}) ->
-            %% On query
-            erlang:display({xxx_on_query, Channel, Method, AmqpMsg}),
-            ok = amqp_channel:cast(Channel, Method, AmqpMsg),
-            erlang:display({sent_xxx_on_query2, Channel, Method, AmqpMsg}),
-            case WaitForPublishConfirmations of
-                true -> true = amqp_channel:wait_for_confirms(Channel, PublishConfirmationTimeout);
-                false -> ok
-            end,
-            erlang:display({xxx_done_wait_for_confirms})
-        end)
-    catch
-        W:E:S ->
-            erlang:display({on_query_error, W, E, S}),
-            erlang:error({error, W, E, S})
-    end.
-% ?SLOG(debug, #{
-%     msg => "clickhouse connector received sql query",
-%     connector => ResourceID,
-%     type => RequestType,
-%     sql => DataOrSQL,
-%     state => State
-% }),
-% %% Have we got a query or data to fit into an SQL template?
-% SimplifiedRequestType = query_type(RequestType),
-% #{templates := Templates} = State,
-% SQL = get_sql(SimplifiedRequestType, Templates, DataOrSQL),
-% ClickhouseResult = execute_sql_in_clickhouse_server(PoolName, SQL),
-% transform_and_log_clickhouse_result(ClickhouseResult, ResourceID, SQL).
+    MessageData = format_data(PayloadTemplate, Data),
+    ecpool:pick_and_do(
+        PoolName,
+        {?MODULE, publish_messages, [Config, [MessageData]]},
+        no_handover
+    ).
 
 on_batch_query(
-    _ResourceID,
+    ResourceID,
     BatchReq,
     State
 ) ->
-    try
-        erlang:display({xxx_do_batch}),
-        %% Currently we only support batch requests with the send_message key
-        {Keys, MessagesToInsert} = lists:unzip(BatchReq),
-        ensure_keys_are_of_type_send_message(Keys),
-        %% Pick out the SQL template
-        #{
-            processed_payload_template := PayloadTemplate,
-            poolname := PoolName,
-            config := Config
-        } = State,
-        %% Create batch insert SQL statement
-        FormattedMessages = [
-            format_data(PayloadTemplate, Data)
-         || Data <- MessagesToInsert
-        ],
-        ecpool:with_client(PoolName, fun(#{channel := Channel}) ->
-            erlang:display({xxx_before}),
-            publish_messages(Channel, Config, FormattedMessages),
-            erlang:display({xxx_after})
-        end)
-    catch
-        W:E:S ->
-            erlang:display({on_query_error, W, E, S}),
-            erlang:error({error, W, E, S})
-    end,
-    ok.
+    ?SLOG(debug, #{
+        msg => "RabbitMQ connector received batch query",
+        connector => ResourceID,
+        data => BatchReq,
+        state => State
+    }),
+    %% Currently we only support batch requests with the send_message key
+    {Keys, MessagesToInsert} = lists:unzip(BatchReq),
+    ensure_keys_are_of_type_send_message(Keys),
+    %% Pick out the SQL template
+    #{
+        processed_payload_template := PayloadTemplate,
+        poolname := PoolName,
+        config := Config
+    } = State,
+    %% Create batch insert SQL statement
+    FormattedMessages = [
+        format_data(PayloadTemplate, Data)
+     || Data <- MessagesToInsert
+    ],
+    %% Publish the messages
+    ecpool:pick_and_do(
+        PoolName,
+        {?MODULE, publish_messages, [Config, FormattedMessages]},
+        no_handover
+    ).
+
+publish_messages(
+    #{channel := Channel},
+    #{
+        delivery_mode := DeliveryMode,
+        routing_key := RoutingKey,
+        exchange := Exchange,
+        wait_for_publish_confirmations := WaitForPublishConfirmations,
+        publish_confirmation_timeout := PublishConfirmationTimeout
+    } = _Config,
+    Messages
+) ->
+    MessageProperties = #'P_basic'{
+        headers = [],
+        delivery_mode = DeliveryMode
+    },
+    Method = #'basic.publish'{
+        exchange = Exchange,
+        routing_key = RoutingKey
+    },
+    [
+        amqp_channel:cast(
+            Channel,
+            Method,
+            #amqp_msg{
+                payload = Message,
+                props = MessageProperties
+            }
+        )
+     || Message <- Messages
+    ],
+    case WaitForPublishConfirmations of
+        true ->
+            case amqp_channel:wait_for_confirms(Channel, PublishConfirmationTimeout) of
+                true ->
+                    ok;
+                false ->
+                    erlang:error(
+                        {recoverable_error,
+                            <<"RabbitMQ: Got NACK when waiting for message acknowledgment.">>}
+                    );
+                timeout ->
+                    erlang:error(
+                        {recoverable_error,
+                            <<"RabbitMQ: Timeout when waiting for message acknowledgment.">>}
+                    )
+            end;
+        false ->
+            ok
+    end.
 
 ensure_keys_are_of_type_send_message(Keys) ->
     case lists:all(fun is_send_message_atom/1, Keys) of
@@ -484,36 +524,6 @@ ensure_keys_are_of_type_send_message(Keys) ->
             )
     end.
 
-publish_messages(
-    Channel,
-    #{
-        delivery_mode := DeliveryMode,
-        routing_key := RoutingKey,
-        exchange := Exchange,
-        wait_for_publish_confirmations := WaitForPublishConfirmations,
-        publish_confirmation_timeout := PublishConfirmationTimeout
-    } = _Config,
-    Messages
-) ->
-    MessageProperties = #'P_basic'{headers = [], delivery_mode = DeliveryMode},
-    [
-        amqp_channel:cast(
-            Channel,
-            #'basic.publish'{
-                exchange = Exchange,
-                routing_key = RoutingKey
-            },
-            #amqp_msg{payload = Message, props = MessageProperties}
-        )
-     || Message <- Messages
-    ],
-    erlang:display({xxx_sent_batch}),
-    case WaitForPublishConfirmations of
-        true -> true = amqp_channel:wait_for_confirms(Channel, PublishConfirmationTimeout);
-        false -> ok
-    end,
-    erlang:display({xxx_sent_batch_done}).
-
 is_send_message_atom(send_message) ->
     true;
 is_send_message_atom(_) ->
@@ -522,5 +532,4 @@ is_send_message_atom(_) ->
 format_data([], Msg) ->
     emqx_utils_json:encode(Msg);
 format_data(Tokens, Msg) ->
-    erlang:display({format_data, Tokens, Msg}),
     emqx_plugin_libs_rule:proc_tmpl(Tokens, Msg).
