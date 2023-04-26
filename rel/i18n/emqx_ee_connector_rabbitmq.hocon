@@ -1,3 +1,4 @@
+
 emqx_ee_connector_rabbitmq {
 
 server.desc:
@@ -72,20 +73,14 @@ routing_key.desc:
 routing_key.label:
 """Routing Key"""
 
-durable.desc:
-"""Whether the RabbitMQ exchange should be durable (persist across server restarts) or not."""
-
-durable.label:
-"""Durable"""
-
 delivery_mode.desc:
-"""The delivery mode for messages published to RabbitMQ."""
+"""The delivery mode for messages published to RabbitMQ. Delivery mode 1 is suitable for messages that don't require persistence across RabbitMQ restarts, whereas delivery mode 2 is designed for messages that must survive RabbitMQ restarts."""
 
 delivery_mode.label:
 """Message Delivery Mode"""
 
 payload_template.desc:
-"""The template for formatting the payload of the message before sending it to RabbitMQ."""
+"""The template for formatting the payload of the message before sending it to RabbitMQ. Template placeholders, such as ${field1.sub_field}, will be substituted with the respective field's value."""
 
 payload_template.label:
 """Payload Template"""

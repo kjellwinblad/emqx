@@ -7,7 +7,7 @@
 -include_lib("hocon/include/hoconsc.hrl").
 -include_lib("snabbkaffe/include/snabbkaffe.hrl").
 
-%% Needed to create connection
+%% Needed to create RabbitMQ connection
 -include_lib("amqp_client/include/amqp_client.hrl").
 
 -behaviour(emqx_resource).
@@ -165,7 +165,7 @@ fields(config) ->
             )},
         {delivery_mode,
             hoconsc:mk(
-                hoconsc:enum([1, 2]),
+                typerefl:range(1, 2),
                 #{
                     default => 1,
                     required => true,
@@ -220,8 +220,8 @@ is_buffer_supported() ->
 
 %% emqx_resource callback called when the resource is started
 
--spec on_start(resource_id(), term()) -> {ok, term()} | {error, _}.
-
+-spec on_start(resource_id(), term()) -> {ok, resource_state()} | {error, _}.
+%% emqx_plugin_libs_pool
 on_start(
     InstanceID,
     #{
@@ -234,21 +234,20 @@ on_start(
         connector => InstanceID,
         config => emqx_utils:redact(Config)
     }),
-    PoolName = emqx_plugin_libs_pool:pool_name(InstanceID),
     Options = [
         {config, Config},
         %% The pool_size is read by ecpool and decides the number of workers in
         %% the pool
         {pool_size, PoolSize},
-        {pool, PoolName}
+        {pool, InstanceID}
     ],
     ProcessedTemplate = emqx_plugin_libs_rule:preproc_tmpl(PayloadTemplate),
     State = #{
-        poolname => PoolName,
+        poolname => InstanceID,
         processed_payload_template => ProcessedTemplate,
         config => Config
     },
-    case emqx_plugin_libs_pool:start_pool(PoolName, ?MODULE, Options) of
+    case emqx_resource_pool:start(InstanceID, ?MODULE, Options) of
         ok ->
             {ok, State};
         {error, Reason} ->
@@ -283,7 +282,7 @@ on_stop(
      || Worker <- Workers
     ],
     %% We need to stop the pool before stopping the workers as the pool monitors the workers
-    StopResult = emqx_plugin_libs_pool:stop_pool(PoolName),
+    StopResult = emqx_resource_pool:stop(PoolName),
     _ = [
         stop_worker(Client)
      || Client <- Clients
@@ -383,7 +382,7 @@ create_rabbitmq_connection_and_channel(Config) ->
 %% emqx_resource callback called to check the status of the resource
 
 -spec on_get_status(resource_id(), term()) ->
-    {connected, term()} | {disconnected, term(), binary()}.
+    {connected, resource_state()} | {disconnected, resource_state(), binary()}.
 
 on_get_status(
     _InstId,
