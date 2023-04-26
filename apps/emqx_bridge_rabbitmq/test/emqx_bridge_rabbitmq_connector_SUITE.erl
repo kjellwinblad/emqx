@@ -132,7 +132,7 @@ end_per_suite(Config) ->
 
 t_lifecycle(Config) ->
     perform_lifecycle_check(
-        <<"emqx_ee_connector_rabbitmq_SUITE">>,
+        erlang:atom_to_binary(?MODULE),
         rabbitmq_config(),
         Config
     ).
@@ -142,7 +142,7 @@ perform_lifecycle_check(ResourceID, InitialConfig, TestConfig) ->
         channel := Channel
     } = get_channel_connection(TestConfig),
     {ok, #{config := CheckedConfig}} =
-        emqx_resource:check_config(emqx_ee_connector_rabbitmq, InitialConfig),
+        emqx_resource:check_config(emqx_bridge_rabbitmq_connector, InitialConfig),
     {ok, #{
         state := #{poolname := PoolName} = State,
         status := InitialStatus
@@ -150,7 +150,7 @@ perform_lifecycle_check(ResourceID, InitialConfig, TestConfig) ->
         emqx_resource:create_local(
             ResourceID,
             ?CONNECTOR_RESOURCE_GROUP,
-            emqx_ee_connector_rabbitmq,
+            emqx_bridge_rabbitmq_connector,
             CheckedConfig,
             #{}
         ),

@@ -91,7 +91,7 @@ fields("config") ->
                 }
             )}
     ] ++
-        emqx_ee_connector_rabbitmq:fields(config);
+        emqx_bridge_rabbitmq_connector:fields(config);
 fields("creation_opts") ->
     emqx_resource_schema:fields("creation_opts");
 fields("post") ->
