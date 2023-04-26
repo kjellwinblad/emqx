@@ -9,7 +9,8 @@
         telemetry,
         emqx_bridge_kafka,
         emqx_bridge_gcp_pubsub,
-        emqx_bridge_opents
+        emqx_bridge_opents,
+        emqx_bridge_rabbitmq
     ]},
     {env, []},
     {modules, []},
