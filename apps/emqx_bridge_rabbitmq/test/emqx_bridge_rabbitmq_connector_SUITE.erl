@@ -13,7 +13,7 @@
 % %% limitations under the License.
 % %%--------------------------------------------------------------------
 
--module(emqx_ee_connector_rabbitmq_SUITE).
+-module(emqx_bridge_rabbitmq_connector_SUITE).
 
 -compile(nowarn_export_all).
 -compile(export_all).

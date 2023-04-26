@@ -1,4 +1,4 @@
--module(emqx_ee_connector_rabbitmq).
+-module(emqx_bridge_rabbitmq_connector).
 
 -include_lib("emqx_connector/include/emqx_connector.hrl").
 -include_lib("emqx_resource/include/emqx_resource.hrl").

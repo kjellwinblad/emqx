@@ -37,7 +37,7 @@ api_schemas(Method) ->
         ref(emqx_ee_bridge_rocketmq, Method),
         ref(emqx_ee_bridge_sqlserver, Method),
         ref(emqx_bridge_opents, Method),
-        ref(emqx_ee_bridge_rabbitmq, Method)
+        ref(emqx_bridge_rabbitmq, Method)
     ].
 
 schema_modules() ->
@@ -59,7 +59,7 @@ schema_modules() ->
         emqx_ee_bridge_rocketmq,
         emqx_ee_bridge_sqlserver,
         emqx_bridge_opents,
-        emqx_ee_bridge_rabbitmq
+        emqx_bridge_rabbitmq
     ].
 
 examples(Method) ->
@@ -100,7 +100,7 @@ resource_type(dynamo) -> emqx_ee_connector_dynamo;
 resource_type(rocketmq) -> emqx_ee_connector_rocketmq;
 resource_type(sqlserver) -> emqx_ee_connector_sqlserver;
 resource_type(opents) -> emqx_bridge_opents_connector;
-resource_type(rabbitmq) -> emqx_ee_connector_rabbitmq.
+resource_type(rabbitmq) -> emqx_bridge_rabbitmq_connector.
 
 fields(bridges) ->
     [
@@ -283,7 +283,7 @@ rabbitmq_structs() ->
     [
         {rabbitmq,
             mk(
-                hoconsc:map(name, ref(emqx_ee_bridge_rabbitmq, "config")),
+                hoconsc:map(name, ref(emqx_bridge_rabbitmq, "config")),
                 #{
                     desc => <<"RabbitMQ Bridge Config">>,
                     required => false
