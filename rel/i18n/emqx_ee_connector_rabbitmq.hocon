@@ -1,223 +1,105 @@
-
 emqx_ee_connector_rabbitmq {
 
-server {
-    desc {
-        en: "The RabbitMQ server address that you want to connect to (for example, localhost)."
-        zh: "你想连接到的 RabbitMQ 服务器地址 (例如, localhost)。"
-    }
-    label: {
-        en: "Server"
-        zh: "服务器"
-    }
-}
+server.desc:
+"""The RabbitMQ server address that you want to connect to (for example, localhost)."""
 
-port {
-    desc {
-        en: "The port number on which the RabbitMQ server is listening (default is 5672)."
-        zh: "RabbitMQ 服务器监听的端口号（默认为 5672）"
-    }
-    label: {
-        en: "Port"
-        zh: "端口"
-    }
-}
+server.label:
+"""Server"""
 
-username {
-    desc {
-        en: "The username used to authenticate with the RabbitMQ server."
-        zh: "用于与 RabbitMQ 服务器进行身份验证的用户名。"
-    }
-    label: {
-        en: "Username"
-        zh: "用户名"
-    }
-}
+port.desc:
+"""The port number on which the RabbitMQ server is listening (default is 5672)."""
 
-password {
-    desc {
-        en: "The password used to authenticate with the RabbitMQ server."
-        zh: "用于与 RabbitMQ 服务器进行身份验证的密码。"
-    }
-    label: {
-        en: "Password"
-        zh: "密码"
-    }
-}
+port.label:
+"""Port"""
 
-pool_size {
-    desc {
-        en: "The size of the connection pool."
-        zh: ""
-    }
-    label: {
-        en: "Pool Size"
-        zh: "连接池大小"
-    }
-}
+username.desc:
+"""The username used to authenticate with the RabbitMQ server."""
 
-timeout {
-    desc {
-        en: "The timeout for waiting on the connection to be established."
-        zh: ""
-    }
-    label: {
-        en: "Connection Timeout"
-        zh: "超时"
-    }
-}
+username.label:
+"""Username"""
 
-virtual_host {
-    desc {
-        en: "The virtual host to use when connecting to the RabbitMQ server."
-        zh: "连接到 RabbitMQ 服务器时使用的虚拟主机。"
-    }
-    label: {
-        en: "Virtual Host"
-        zh: "虚拟主机"
-    }
-}
+password.desc:
+"""The password used to authenticate with the RabbitMQ server."""
 
-heartbeat {
-    desc {
-        en: "The interval for sending heartbeat messages to the RabbitMQ server."
-        zh: "向 RabbitMQ 服务器发送心跳消息的间隔。"
-    }
-    label: {
-        en: "Heartbeat"
-        zh: "心跳"
-    }
-}
+password.label:
+"""Password"""
 
-auto_reconnect {
-    desc {
-        en: "The interval for attempting to reconnect to the RabbitMQ server if the connection is lost."
-        zh: "如果连接丢失，尝试重新连接到 RabbitMQ 服务器的时间间隔。"
-    }
-    label: {
-        en: "Auto Reconnect"
-        zh: "自动重连"
-    }
-}
+pool_size.desc:
+"""The size of the connection pool."""
 
-exchange {
-    desc {
-        en: "The name of the RabbitMQ exchange where the messages will be sent."
-        zh: "将消息发送到的 RabbitMQ 交换器的名称。"
-    }
-    label: {
-        en: "Exchange"
-        zh: "交换器"
-    }
-}
+pool_size.label:
+"""Pool Size"""
 
-exchange_type {
-    desc {
-        en: "The type of the RabbitMQ exchange (direct, fanout, or topic)."
-        zh: "RabbitMQ 交换器的类型 (direct, fanout 或 topic)。"
-    }
-    label: {
-        en: "Exchange Type"
-        zh: "交换器类型"
-    }
-}
+timeout.desc:
+"""The timeout for waiting on the connection to be established."""
 
-routing_key {
-    desc {
-        en: "The routing key used to route messages to the correct queue in the RabbitMQ exchange."
-        zh: "用于将消息路由到 RabbitMQ 交换器中正确队列的路由键。"
-    }
-    label: {
-        en: "Routing Key"
-        zh: "路由键"
-    }
-}
+timeout.label:
+"""Connection Timeout"""
 
-durable {
-    desc {
-        en: "Whether the RabbitMQ exchange should be durable (persist across server restarts) or not."
-        zh: "RabbitMQ 交换器是否应持久化（跨服务器重启持久化）。"
-    }
-    label: {
-        en: "Durable"
-        zh: "持久化"
-    }
-}
+virtual_host.desc:
+"""The virtual host to use when connecting to the RabbitMQ server."""
 
-delivery_mode {
-    desc {
-        en: """
-The delivery mode for messages published to RabbitMQ. There are two possible values:
+virtual_host.label:
+"""Virtual Host"""
 
-1. Non-persistent (transient) mode: Messages are not written to disk and will be lost if the RabbitMQ server restarts or crashes. This mode typically has lower latency because messages don't need to be written to disk, but it doesn't provide durability guarantees.
+heartbeat.desc:
+"""The interval for sending heartbeat messages to the RabbitMQ server."""
 
-2. Persistent mode: Messages are written to disk and can survive RabbitMQ server restarts or crashes. This mode provides durability guarantees but might have slightly higher latency due to the need to write messages to disk.
+heartbeat.label:
+"""Heartbeat"""
 
-Default value is 1 (non-persistent mode).
-"""
-        zh: """
-发布到 RabbitMQ 的消息的传递模式。有两个可能的值：
+auto_reconnect.desc:
+"""The interval for attempting to reconnect to the RabbitMQ server if the connection is lost."""
 
-1. 非持久性（瞬态）模式：消息不写入磁盘，在 RabbitMQ 服务器重启或崩溃时会丢失。这种模式通常具有较低的延迟，因为不需要将消息写入磁盘，但不提供持久性保证。
+auto_reconnect.label:
+"""Auto Reconnect"""
 
-2. 持久性模式：消息写入磁盘，并在 RabbitMQ 服务器重启或崩溃时保留。这种模式提供持久性保证，但可能由于需要将消息写入磁盘而导致略高的延迟。
+exchange.desc:
+"""The name of the RabbitMQ exchange where the messages will be sent."""
 
-默认值为 1（非持久性模式）。
-"""
-    }
-    label: {
-        en: "Message Delivery Mode"
-        zh: "消息传递模式"
-    }
-}
+exchange.label:
+"""Exchange"""
 
+exchange_type.desc:
+"""The type of the RabbitMQ exchange (direct, fanout, or topic)."""
 
-payload_template {
-    desc {
-        en: "The template for formatting the payload of the message before sending it to RabbitMQ."
-        zh: "在将消息发送到 RabbitMQ 之前格式化消息有效负载的模板。"
-    }
-    label: {
-        en: "Payload Template"
-        zh: "有效负载模板"
-    }
-}
+exchange_type.label:
+"""Exchange Type"""
 
-publish_confirmation_timeout {
-    desc {
-        en: """
-The timeout for waiting for RabbitMQ to confirm message publication when using publisher confirms. This value is expressed as a duration (for example, "30s" for 30 seconds). If the confirmation is not received within the specified timeout, the message is considered unacknowledged.
+routing_key.desc:
+"""The routing key used to route messages to the correct queue in the RabbitMQ exchange."""
 
-Default value is "30s" (30 seconds).
-"""
-        zh: """
-在使用发布者确认时，等待 RabbitMQ 确认消息发布的超时时间。该值以持续时间表示（例如，"30s" 表示 30 秒）。如果在指定的超时时间内未收到确认，消息将被视为未确认。
+routing_key.label:
+"""Routing Key"""
 
-默认值为 "30s"（30 秒）。
-"""
-    }
-    label: {
-        en: "Publish Confirmation Timeout"
-        zh: "发布确认超时"
-    }
-}
+durable.desc:
+"""Whether the RabbitMQ exchange should be durable (persist across server restarts) or not."""
 
-wait_for_publish_confirmations {
-    desc {
-        en: """
-A boolean value that indicates whether to wait for RabbitMQ to confirm message publication when using publisher confirms. If set to true, the publisher will wait for confirmations from RabbitMQ before considering the message sent successfully. If set to false, the publisher will not wait for confirmations, and the message might be lost in case of failures.
+durable.label:
+"""Durable"""
 
-Default value is true (wait for confirmations).
-"""
-        zh: """
-一个布尔值，表示在使用发布者确认时是否等待 RabbitMQ 确认消息发布。如果设置为 true，则发布者将在认为消息发送成功之前等待来自 RabbitMQ 的确认。如果设置为 false，则发布者将不等待确认，如果发生故障，消息可能会丢失。
+delivery_mode.desc:
+"""The delivery mode for messages published to RabbitMQ."""
 
-默认值为 true（等待确认）。
-"""
-    }
-    label: {
-        en: "Wait for Publish Confirmations"
-        zh: "等待发布确认"
-    }
-}
+delivery_mode.label:
+"""Message Delivery Mode"""
+
+payload_template.desc:
+"""The template for formatting the payload of the message before sending it to RabbitMQ."""
+
+payload_template.label:
+"""Payload Template"""
+
+publish_confirmation_timeout.desc:
+"""The timeout for waiting for RabbitMQ to confirm message publication when using publisher confirms."""
+
+publish_confirmation_timeout.label:
+"""Publish Confirmation Timeout"""
+
+wait_for_publish_confirmations.desc:
+"""A boolean value that indicates whether to wait for RabbitMQ to confirm message publication when using publisher confirms."""
+
+wait_for_publish_confirmations.label:
+"""Wait for Publish Confirmations"""
+
 }
