@@ -65,11 +65,20 @@ apply_rule_discard_result(Rule, Columns, Envs) ->
     _ = apply_rule(Rule, Columns, Envs),
     ok.
 
+%% Make the payload field to be a binary to make matching simple
+fix_payload_field(#{payload := Payload} = Columns) ->
+    Columns1 = maps:remove(payload, Columns),
+    Columns1#{<<"payload">> => Payload};
+fix_payload_field(Columns) ->
+    Columns.
+
 apply_rule(Rule = #{id := RuleID}, Columns, Envs) ->
     ok = emqx_metrics_worker:inc(rule_metrics, RuleID, 'matched'),
     clear_rule_payload(),
     try
-        do_apply_rule(Rule, add_metadata(Columns, #{rule_id => RuleID}), Envs)
+        NewColumns1 = add_metadata(Columns, #{rule_id => RuleID}),
+        NewColumns2 = fix_payload_field(NewColumns1),
+        do_apply_rule(Rule, NewColumns2, Envs)
     catch
         %% ignore the errors if select or match failed
         _:Reason = {select_and_transform_error, Error} ->
@@ -162,9 +171,11 @@ do_apply_rule(
         conditions := Conditions,
         actions := Actions
     },
-    Columns,
+    Columns0,
     Envs
 ) ->
+    Columns = mark_payload_field_as_unparsed(Columns0),
+    erlang:display({columns, Columns}),
     Selected = ?RAISE(
         select_and_transform(Fields, Columns),
         {select_and_transform_error, {EXCLASS, EXCPTION, ST}}
@@ -183,31 +194,65 @@ do_apply_rule(
             {error, nomatch}
     end.
 
+mark_payload_field_as_unparsed(Columns0) ->
+    PayloadWithMark = {unparsed, maps:get(<<"payload">>, Columns0, <<"">>)},
+    maps:put(<<"payload">>, PayloadWithMark, Columns0).
+
 clear_rule_payload() ->
     erlang:erase(rule_payload).
 
 %% SELECT Clause
 select_and_transform(Fields, Columns) ->
-    select_and_transform(Fields, Columns, #{}).
+    erlang:display({select_and_transform, Fields, Columns}),
+    {ResultEnv, FieldsList} = select_and_transform(Fields, Columns, []),
+    RuleResultMap = pick_fields_from_env(ResultEnv, FieldsList).
 
-select_and_transform([], _Columns, Action) ->
-    Action;
-select_and_transform(['*' | More], Columns, Action) ->
-    select_and_transform(More, Columns, maps:merge(Action, Columns));
-select_and_transform([{as, Field, Alias} | More], Columns, Action) ->
-    Val = eval(Field, [Action, Columns]),
-    select_and_transform(
-        More,
-        Columns,
-        nested_put(Alias, Val, Action)
+pick_fields_from_env(ResultEnv, FieldsList) ->
+    lists:foldl(
+        fun(Alias, Acc) ->
+            Val = nested_get(Alias, ResultEnv),
+            nested_put(Alias, Val, Acc)
+        end,
+        #{},
+        FieldsList
+    ).
+
+get_leaf_paths(Env) ->
+    lists:flatten(get_leaf_paths(Env, [])).
+
+get_leaf_paths(Map, Path) when is_map(Map) ->
+    lists:foldl(
+        fun({Key, Val}, Acc) ->
+            [get_leaf_paths(Val, [{key, Key} | Path]), Acc]
+        end,
+        [],
+        maps:to_list(Map)
     );
-select_and_transform([Field | More], Columns, Action) ->
-    Val = eval(Field, [Action, Columns]),
-    Key = alias(Field, Columns),
+get_leaf_paths(Val, Path) ->
+    [{path, lists:reverse(Path)}].
+
+select_and_transform([], Env, FieldsList) ->
+    {Env, FieldsList};
+select_and_transform(['*' | More], Env, FieldsList) ->
+    select_and_transform(More, Env, get_leaf_paths(Env));
+select_and_transform([{as, Field, Alias} | More], Env, FieldsList) ->
+    erlang:display({as___xxxxxxxxxxxxxxxxxxx, Field, Alias}),
+    {Val, NewEnv} = eval(Field, Env),
+    %% The payload might get reassigned in which case we need to update
+    %% the cache so that later expressions will use the new payload value.
     select_and_transform(
         More,
-        Columns,
-        nested_put(Key, Val, Action)
+        nested_put(Alias, Val, NewEnv),
+        [Alias | FieldsList]
+    );
+select_and_transform([Field | More], Env, FieldsList) ->
+    {Val, NewEnv} = Env,
+    Key = alias(Field, Env),
+    erlang:display({alias, Key, Val}),
+    select_and_transform(
+        More,
+        nested_put(Key, Val, NewEnv),
+        [Key | FieldsList]
     ).
 
 %% FOREACH Clause
@@ -367,58 +412,97 @@ do_handle_action(RuleId, #{mod := Mod, func := Func, args := Args}, Selected, En
     inc_action_metrics(RuleId, Result),
     Result.
 
-eval({Op, _} = Exp, Context) when is_list(Context) andalso (Op == path orelse Op == var) ->
-    case Context of
-        [Columns] ->
-            eval(Exp, Columns);
-        [Columns | Rest] ->
-            case eval(Exp, Columns) of
-                undefined -> eval(Exp, Rest);
-                Val -> Val
-            end
-    end;
+% eval({Op, _} = Exp, Context) when is_list(Context) andalso (Op == path orelse Op == var) ->
+%     case Context of
+%         [Columns] ->
+%             eval(Exp, Columns);
+%         [Columns | Rest] ->
+%             case eval(Exp, Columns) of
+%                 undefined -> eval(Exp, Rest);
+%                 Val -> Val
+%             end
+%     end;
+eval(
+    {path, [{key, <<"payload">>} | _]} = Path, #{<<"payload">> := {unparsed, UnparsedPayload}} = Env
+) ->
+    %% Lazy decode payload
+    NewEnv = Env#{<<"payload">> => safe_decode_payload(UnparsedPayload)},
+    eval(Path, NewEnv);
+% eval({path, [{key, <<"payload">>} | Path]}, #{payload := Payload}) ->
+%     nested_get({path, Path}, maybe_decode_payload(Payload));
 eval({path, [{key, <<"payload">>} | Path]}, #{payload := Payload}) ->
-    nested_get({path, Path}, maybe_decode_payload(Payload));
-eval({path, [{key, <<"payload">>} | Path]}, #{<<"payload">> := Payload}) ->
-    nested_get({path, Path}, maybe_decode_payload(Payload));
+    erlang:error(why_do_we_have_two_payloads);
+%% nested_get({path, Path}, maybe_decode_payload(Payload));
 eval({path, _} = Path, Columns) ->
-    nested_get(Path, Columns);
-eval({range, {Begin, End}}, _Columns) ->
-    range_gen(Begin, End);
+    {nested_get(Path, Columns), Columns};
+eval({range, {Begin, End}}, Columns) ->
+    {range_gen(Begin, End), Columns};
 eval({get_range, {Begin, End}, Data}, Columns) ->
-    range_get(Begin, End, eval(Data, Columns));
+    {Val, NewEnv} = eval(Data, Columns),
+    {NewEnv, range_get(Begin, End, Val)};
 eval({var, _} = Var, Columns) ->
-    nested_get(Var, Columns);
-eval({const, Val}, _Columns) ->
-    Val;
+    {nested_get(Var, Columns), Columns};
+eval({const, Val}, Columns) ->
+    {Val, Columns};
 %% unary add
-eval({'+', L}, Columns) ->
-    eval(L, Columns);
+eval({'+', L}, Env) ->
+    {Val, NewEnv} = eval(L, Env),
+    {Val, NewEnv};
 %% unary subtract
-eval({'-', L}, Columns) ->
-    -(eval(L, Columns));
-eval({Op, L, R}, Columns) when ?is_arith(Op) ->
-    apply_func(Op, [eval(L, Columns), eval(R, Columns)], Columns);
-eval({Op, L, R}, Columns) when ?is_comp(Op) ->
-    compare(Op, eval(L, Columns), eval(R, Columns));
-eval({list, List}, Columns) ->
-    [eval(L, Columns) || L <- List];
+eval({'-', L}, Env) ->
+    {Val, NewEnv} = eval(L, Env),
+    {-(Val), NewEnv};
+eval({Op, L, R}, Env) when ?is_arith(Op) ->
+    erlang:display({xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx_HERE, Op, L, R}),
+    {ValL, NewEnv1} = eval(L, Env),
+    erlang:display({xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx_HERE, ValL, NewEnv1}),
+    {ValR, NewEnv2} = eval(R, NewEnv1),
+    erlang:display({xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx_HERE, ValR, NewEnv2}),
+    {apply_func(Op, [ValL, ValR], NewEnv2), NewEnv2};
+eval({Op, L, R}, Env) when ?is_comp(Op) ->
+    {ValL, NewEnv1} = eval(L, Env),
+    {ValR, NewEnv2} = eval(R, NewEnv1),
+    {compare(Op, ValL, ValR), NewEnv2};
+eval({list, List}, Env) ->
+    {ResultListReversed, NewEnv} =
+        lists:foldl(
+            fun(Item, {ListSoFar, CEnv}) ->
+                {Val, NCEnv} = eval(Item, CEnv),
+                {[Val | ListSoFar], NCEnv}
+            end,
+            {[], Env},
+            List
+        ),
+    {lists:reverse(ResultListReversed), NewEnv};
 eval({'case', <<>>, CaseClauses, ElseClauses}, Columns) ->
+    %% TODO fix update of env
     eval_case_clauses(CaseClauses, ElseClauses, Columns);
 eval({'case', CaseOn, CaseClauses, ElseClauses}, Columns) ->
+    %% TODO fix update of env
     eval_switch_clauses(CaseOn, CaseClauses, ElseClauses, Columns);
-eval({'fun', {_, Name}, Args}, Columns) ->
-    apply_func(Name, [eval(Arg, Columns) || Arg <- Args], Columns).
+eval({'fun', {_, Name}, Args}, Env) ->
+    {ArgListReversed, NewEnv} =
+        lists:foldl(
+            fun(Item, {ListSoFar, CEnv}) ->
+                {Val, NCEnv} = eval(Item, CEnv),
+                {[Val | ListSoFar], NCEnv}
+            end,
+            {[], Env},
+            Args
+        ),
+    ArgList = lists:reverse(ArgListReversed),
+    %% Could the function change the environment?
+    {apply_func(Name, ArgList, NewEnv), NewEnv}.
 
-%% the payload maybe is JSON data, decode it to a `map` first for nested put
-ensure_decoded_payload({path, [{key, payload} | _]}, #{payload := Payload} = Columns) ->
-    Columns#{payload => maybe_decode_payload(Payload)};
-ensure_decoded_payload(
-    {path, [{key, <<"payload">>} | _]}, #{<<"payload">> := Payload} = Columns
-) ->
-    Columns#{<<"payload">> => maybe_decode_payload(Payload)};
-ensure_decoded_payload(_, Columns) ->
-    Columns.
+% %% the payload maybe is JSON data, decode it to a `map` first for nested put
+% ensure_decoded_payload({path, [{key, payload} | _]}, #{payload := Payload} = Columns) ->
+%     Columns#{payload => maybe_decode_payload(Payload)};
+% ensure_decoded_payload(
+%     {path, [{key, <<"payload">>} | _]}, #{<<"payload">> := Payload} = Columns
+% ) ->
+%     Columns#{<<"payload">> => maybe_decode_payload(Payload)};
+% ensure_decoded_payload(_, Columns) ->
+%     Columns.
 
 alias({var, Var}, _Columns) ->
     {var, Var};
@@ -507,24 +591,34 @@ add_metadata(Columns, Metadata) when is_map(Columns), is_map(Metadata) ->
 %%------------------------------------------------------------------------------
 %% Internal Functions
 %%------------------------------------------------------------------------------
-maybe_decode_payload(Payload) when is_binary(Payload) ->
-    case get_cached_payload() of
-        undefined -> safe_decode_and_cache(Payload);
-        DecodedP -> DecodedP
-    end;
-maybe_decode_payload(Payload) ->
-    Payload.
+% maybe_decode_payload(Payload) when is_binary(Payload) ->
+%     case get_cached_payload() of
+%         undefined -> safe_decode_and_cache(Payload);
+%         DecodedP -> DecodedP
+%     end;
+% maybe_decode_payload(Payload) ->
+%     Payload.
 
-get_cached_payload() ->
-    erlang:get(rule_payload).
+% get_cached_payload() ->
+%     erlang:get(rule_payload).
 
-cache_payload(DecodedP) ->
-    erlang:put(rule_payload, DecodedP),
-    DecodedP.
+% cache_payload(DecodedP) ->
+%     erlang:put(rule_payload, DecodedP),
+%     DecodedP.
 
-safe_decode_and_cache(MaybeJson) ->
+% safe_decode_and_cache(MaybeJson) ->
+%     try
+%         cache_payload(emqx_utils_json:decode(MaybeJson, [return_maps]))
+%     catch
+%         _:_ -> error({decode_json_failed, MaybeJson})
+%     end.
+
+safe_decode_payload(Map) when is_map(Map) ->
+    %% Already decoded (from test case)
+    Map;
+safe_decode_payload(MaybeJson) ->
     try
-        cache_payload(emqx_utils_json:decode(MaybeJson, [return_maps]))
+        emqx_utils_json:decode(MaybeJson, [return_maps])
     catch
         _:_ -> error({decode_json_failed, MaybeJson})
     end.
@@ -532,8 +626,8 @@ safe_decode_and_cache(MaybeJson) ->
 ensure_list(List) when is_list(List) -> List;
 ensure_list(_NotList) -> [].
 
-nested_put(Alias, Val, Columns0) ->
-    Columns = ensure_decoded_payload(Alias, Columns0),
+nested_put(Alias, Val, Columns) ->
+    % Columns = ensure_decoded_payload(Alias, Columns0),
     emqx_rule_maps:nested_put(Alias, Val, Columns).
 
 inc_action_metrics(RuleId, Result) ->
