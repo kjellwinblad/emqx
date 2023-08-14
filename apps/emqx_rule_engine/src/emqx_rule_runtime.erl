@@ -135,9 +135,10 @@ do_apply_rule(
         conditions := Conditions,
         actions := Actions
     },
-    Columns,
+    Columns0,
     Envs
 ) ->
+    Columns = mark_payload_field_as_unparsed(Columns0),
     {Selected, Collection} = ?RAISE(
         select_and_collect(Fields, Columns),
         {select_and_collect_error, {EXCLASS, EXCPTION, ST}}
@@ -149,8 +150,8 @@ do_apply_rule(
             {match_conditions_error, {EXCLASS, EXCPTION, ST}}
         )
     of
-        true ->
-            Collection2 = filter_collection(ColumnsAndSelected, InCase, DoEach, Collection),
+        {true, NewColumnsAndSelected} ->
+            Collection2 = filter_collection(NewColumnsAndSelected, InCase, DoEach, Collection),
             case Collection2 of
                 [] ->
                     ok = emqx_metrics_worker:inc(rule_metrics, RuleId, 'failed.no_result');
@@ -159,7 +160,7 @@ do_apply_rule(
             end,
             NewEnvs = maps:merge(ColumnsAndSelected, Envs),
             {ok, [handle_action_list(RuleId, Actions, Coll, NewEnvs) || Coll <- Collection2]};
-        false ->
+        {false, _NewColumnsAndSelected} ->
             ok = emqx_metrics_worker:inc(rule_metrics, RuleId, 'failed.no_result'),
             {error, nomatch}
     end;
@@ -176,26 +177,38 @@ do_apply_rule(
 ) ->
     Columns = mark_payload_field_as_unparsed(Columns0),
     erlang:display({columns, Columns}),
-    Selected = ?RAISE(
+    Selected0 = ?RAISE(
         select_and_transform(Fields, Columns),
         {select_and_transform_error, {EXCLASS, EXCPTION, ST}}
     ),
+    Selected = fix_payload_field_after_select(Selected0),
     case
         ?RAISE(
             match_conditions(Conditions, maps:merge(Columns, Selected)),
             {match_conditions_error, {EXCLASS, EXCPTION, ST}}
         )
     of
-        true ->
+        {true, _} ->
             ok = emqx_metrics_worker:inc(rule_metrics, RuleId, 'passed'),
             {ok, handle_action_list(RuleId, Actions, Selected, maps:merge(Columns, Envs))};
-        false ->
+        {false, _} ->
             ok = emqx_metrics_worker:inc(rule_metrics, RuleId, 'failed.no_result'),
             {error, nomatch}
     end.
 
+fix_payload_field_after_select(#{<<"payload">> := {with_cache, #{text := Text}}} = Selected) ->
+    Selected#{<<"payload">> => Text};
+fix_payload_field_after_select(Selected) ->
+    Selected.
+
 mark_payload_field_as_unparsed(Columns0) ->
-    PayloadWithMark = {unparsed, maps:get(<<"payload">>, Columns0, <<"">>)},
+    Text = maps:get(<<"payload">>, Columns0, <<"">>),
+    PayloadWithMark =
+        {with_cache, #{
+            text => Text,
+            map => unparsed,
+            is_field => false
+        }},
     maps:put(<<"payload">>, PayloadWithMark, Columns0).
 
 clear_rule_payload() ->
@@ -205,7 +218,7 @@ clear_rule_payload() ->
 select_and_transform(Fields, Columns) ->
     erlang:display({select_and_transform, Fields, Columns}),
     {ResultEnv, FieldsList} = select_and_transform(Fields, Columns, []),
-    RuleResultMap = pick_fields_from_env(ResultEnv, FieldsList).
+    pick_fields_from_env(ResultEnv, FieldsList).
 
 pick_fields_from_env(ResultEnv, FieldsList) ->
     lists:foldl(
@@ -235,9 +248,22 @@ select_and_transform([], Env, FieldsList) ->
     {Env, FieldsList};
 select_and_transform(['*' | More], Env, FieldsList) ->
     select_and_transform(More, Env, get_leaf_paths(Env));
+select_and_transform(
+    [{as, {var, <<"Payload">>} = Key, {var, <<"Payload">>}} | More],
+    #{<<"payload">> := {with_cache, CacheValueHolder}} = Env,
+    FieldsList
+) ->
+    %% Just add the payload to the fields list (this clause is to not lose the cache and remain compatible with the old version)
+    select_and_transform(
+        More,
+        Env#{<<"payload">> => {with_cache, CacheValueHolder#{is_field => true}}},
+        [Key | FieldsList]
+    );
 select_and_transform([{as, Field, Alias} | More], Env, FieldsList) ->
-    erlang:display({as___xxxxxxxxxxxxxxxxxxx, Field, Alias}),
     {Val, NewEnv} = eval(Field, Env),
+    erlang:display({as___xxxxxxxxxxxxxxxxxxx, Field, Alias, xxx_value, Val}),
+    erlang:display({as___xxxxxxxxxxxxxxxxxxx_new_env0, NewEnv}),
+    erlang:display({as___xxxxxxxxxxxxxxxxxxx_new_env1, nested_put(Alias, Val, NewEnv)}),
     %% The payload might get reassigned in which case we need to update
     %% the cache so that later expressions will use the new payload value.
     select_and_transform(
@@ -245,9 +271,21 @@ select_and_transform([{as, Field, Alias} | More], Env, FieldsList) ->
         nested_put(Alias, Val, NewEnv),
         [Alias | FieldsList]
     );
+select_and_transform(
+    [{var, <<"payload">>} = Key | More],
+    #{<<"payload">> := {with_cache, CacheValueHolder}} = Env,
+    FieldsList
+) ->
+    %% Just add the payload to the fields list
+    erlang:display({xxxx_just_add, Key, CacheValueHolder}),
+    select_and_transform(
+        More,
+        Env#{<<"payload">> => {with_cache, CacheValueHolder#{is_field => true}}},
+        [Key | FieldsList]
+    );
 select_and_transform([Field | More], Env, FieldsList) ->
-    {Val, NewEnv} = Env,
-    Key = alias(Field, Env),
+    {Val, NewEnv} = eval(Field, Env),
+    Key = alias(Field, NewEnv),
     erlang:display({alias, Key, Val}),
     select_and_transform(
         More,
@@ -258,50 +296,54 @@ select_and_transform([Field | More], Env, FieldsList) ->
 %% FOREACH Clause
 -spec select_and_collect(list(), columns()) -> {columns(), collection()}.
 select_and_collect(Fields, Columns) ->
-    select_and_collect(Fields, Columns, {#{}, {'item', []}}).
+    {ResultEnv, FieldList, Collection} =
+        select_and_collect(Fields, Columns, [], {'item', []}),
+    {pick_fields_from_env(ResultEnv, FieldList), Collection}.
 
-select_and_collect([{as, Field, {_, A} = Alias}], Columns, {Action, _}) ->
-    Val = eval(Field, [Action, Columns]),
-    {nested_put(Alias, Val, Action), {A, ensure_list(Val)}};
-select_and_collect([{as, Field, Alias} | More], Columns, {Action, LastKV}) ->
-    Val = eval(Field, [Action, Columns]),
+select_and_collect([{as, Field, {_, A} = Alias}], Env, FieldsList, _) ->
+    {Val, NewEnv} = eval(Field, Env),
+    {nested_put(Alias, Val, NewEnv), [Alias | FieldsList], {A, ensure_list(Val)}};
+select_and_collect([{as, Field, Alias} | More], Env, FieldList, LastKV) ->
+    {Val, NewEnv} = eval(Field, Env),
     select_and_collect(
         More,
-        nested_put(Alias, Val, Columns),
-        {nested_put(Alias, Val, Action), LastKV}
+        nested_put(Alias, Val, NewEnv),
+        [Alias | FieldList],
+        LastKV
     );
-select_and_collect([Field], Columns, {Action, _}) ->
-    Val = eval(Field, [Action, Columns]),
-    Key = alias(Field, Columns),
-    {nested_put(Key, Val, Action), {'item', ensure_list(Val)}};
-select_and_collect([Field | More], Columns, {Action, LastKV}) ->
-    Val = eval(Field, [Action, Columns]),
-    Key = alias(Field, Columns),
+select_and_collect([Field], Env, FieldList, _) ->
+    {Val, NewEnv} = eval(Field, Env),
+    Key = alias(Field, NewEnv),
+    {nested_put(Key, Val, NewEnv), [Key | FieldList], {'item', ensure_list(Val)}};
+select_and_collect([Field | More], Env, FieldList, LastKV) ->
+    {Val, NewEnv} = eval(Field, Env),
+    Key = alias(Field, NewEnv),
     select_and_collect(
         More,
-        Columns,
-        {nested_put(Key, Val, Action), LastKV}
+        nested_put(Key, Val, NewEnv),
+        [Key | FieldList],
+        LastKV
     ).
 
 %% Filter each item got from FOREACH
 filter_collection(Columns, InCase, DoEach, {CollKey, CollVal}) ->
     lists:filtermap(
         fun(Item) ->
-            ColumnsAndItem = maps:merge(Columns, #{CollKey => Item}),
+            ColumnsAndItem = Columns#{CollKey => Item},
             case
                 ?RAISE(
                     match_conditions(InCase, ColumnsAndItem),
                     {match_incase_error, {EXCLASS, EXCPTION, ST}}
                 )
             of
-                true when DoEach == [] -> {true, ColumnsAndItem};
-                true ->
+                {true, NewColumnsAndItem} when DoEach == [] -> {true, NewColumnsAndItem};
+                {true, NewColumnsAndItem} ->
                     {true,
                         ?RAISE(
-                            select_and_transform(DoEach, ColumnsAndItem),
+                            select_and_transform(DoEach, NewColumnsAndItem),
                             {doeach_error, {EXCLASS, EXCPTION, ST}}
                         )};
-                false ->
+                {false, _} ->
                     false
             end
         end,
@@ -309,25 +351,46 @@ filter_collection(Columns, InCase, DoEach, {CollKey, CollVal}) ->
     ).
 
 %% Conditional Clauses such as WHERE, WHEN.
-match_conditions({'and', L, R}, Data) ->
-    match_conditions(L, Data) andalso match_conditions(R, Data);
-match_conditions({'or', L, R}, Data) ->
-    match_conditions(L, Data) orelse match_conditions(R, Data);
-match_conditions({'not', Var}, Data) ->
-    case eval(Var, Data) of
-        Bool when is_boolean(Bool) ->
-            not Bool;
-        _Other ->
-            false
+match_conditions({'and', L, R}, Env) ->
+    {NewEnv1, LVal} = eval(L, Env),
+    case LVal of
+        false ->
+            {false, NewEnv1};
+        true ->
+            {NewEnv2, RVal} = eval(R, NewEnv1),
+            {RVal, NewEnv2};
+        X ->
+            erlang:throw({badarg, X})
     end;
-match_conditions({in, Var, {list, Vals}}, Data) ->
-    lists:member(eval(Var, Data), [eval(V, Data) || V <- Vals]);
-match_conditions({'fun', {_, Name}, Args}, Data) ->
-    apply_func(Name, [eval(Arg, Data) || Arg <- Args], Data);
-match_conditions({Op, L, R}, Data) when ?is_comp(Op) ->
-    compare(Op, eval(L, Data), eval(R, Data));
-match_conditions({}, _Data) ->
-    true.
+match_conditions({'or', L, R}, Env) ->
+    {NewEnv1, LVal} = eval(L, Env),
+    case LVal of
+        true ->
+            {true, NewEnv1};
+        false ->
+            {NewEnv2, RVal} = eval(R, NewEnv1),
+            {RVal, NewEnv2};
+        X ->
+            erlang:throw({badarg, X})
+    end;
+match_conditions({'not', Var}, Env) ->
+    {NewEnv, Val} = eval(Var, Env),
+    case Val of
+        Bool when is_boolean(Bool) ->
+            {not Bool, NewEnv};
+        _Other ->
+            {false, NewEnv}
+    end;
+match_conditions({in, Var, {list, Vals} = ListConstruct}, Env) ->
+    {NewEnv1, InVal} = eval(Var, Env),
+    {NewEnv2, List} = eval(ListConstruct, NewEnv1),
+    {NewEnv2, lists:member(InVal, List)};
+match_conditions({'fun', {_, Name}, Args} = Clause, Data) ->
+    eval(Clause, Data);
+match_conditions({Op, L, R} = Clause, Data) when ?is_comp(Op) ->
+    eval(Clause, Data);
+match_conditions({}, Data) ->
+    {true, Data}.
 
 %% compare to an undefined variable
 compare(Op, undefined, undefined) ->
@@ -423,13 +486,23 @@ do_handle_action(RuleId, #{mod := Mod, func := Func, args := Args}, Selected, En
 %             end
 %     end;
 eval(
-    {path, [{key, <<"payload">>} | _]} = Path, #{<<"payload">> := {unparsed, UnparsedPayload}} = Env
+    {path, [{key, <<"payload">>} | _]} = Path,
+    #{<<"payload">> := {with_cache, #{text := PayloadText, map := unparsed} = PrevPayload}} = Env
 ) ->
     %% Lazy decode payload
-    NewEnv = Env#{<<"payload">> => safe_decode_payload(UnparsedPayload)},
+    PayloadMap = safe_decode_payload(PayloadText),
+    NewEnv = Env#{<<"payload">> => {with_cache, PrevPayload#{map => PayloadMap}}},
     eval(Path, NewEnv);
-% eval({path, [{key, <<"payload">>} | Path]}, #{payload := Payload}) ->
-%     nested_get({path, Path}, maybe_decode_payload(Payload));
+eval(
+    {path, [{key, <<"payload">>} | PathInPayload]},
+    #{<<"payload">> := {with_cache, #{map := PayloadMap}}} = Env
+) ->
+    {nested_get({path, PathInPayload}, PayloadMap), Env};
+eval(
+    {var, <<"payload">>},
+    #{<<"payload">> := {with_cache, #{text := PayloadText}}} = Env
+) ->
+    {PayloadText, Env};
 eval({path, [{key, <<"payload">>} | Path]}, #{payload := Payload}) ->
     erlang:error(why_do_we_have_two_payloads);
 %% nested_get({path, Path}, maybe_decode_payload(Payload));
@@ -439,7 +512,9 @@ eval({range, {Begin, End}}, Columns) ->
     {range_gen(Begin, End), Columns};
 eval({get_range, {Begin, End}, Data}, Columns) ->
     {Val, NewEnv} = eval(Data, Columns),
-    {NewEnv, range_get(Begin, End, Val)};
+    erlang:display({xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx_HERE_get_range, Val, Data}),
+    erlang:display({range_get, range_get(Begin, End, Val)}),
+    {range_get(Begin, End, Val), NewEnv};
 eval({var, _} = Var, Columns) ->
     {nested_get(Var, Columns), Columns};
 eval({const, Val}, Columns) ->
@@ -475,10 +550,8 @@ eval({list, List}, Env) ->
         ),
     {lists:reverse(ResultListReversed), NewEnv};
 eval({'case', <<>>, CaseClauses, ElseClauses}, Columns) ->
-    %% TODO fix update of env
     eval_case_clauses(CaseClauses, ElseClauses, Columns);
 eval({'case', CaseOn, CaseClauses, ElseClauses}, Columns) ->
-    %% TODO fix update of env
     eval_switch_clauses(CaseOn, CaseClauses, ElseClauses, Columns);
 eval({'fun', {_, Name}, Args}, Env) ->
     {ArgListReversed, NewEnv} =
@@ -534,31 +607,34 @@ handle_path_alias({path, [{key, <<"payload">>} | Rest]}, #{payload := _Payload} 
 handle_path_alias(Path, _Columns) ->
     Path.
 
-eval_case_clauses([], ElseClauses, Columns) ->
+eval_case_clauses([], ElseClauses, Env) ->
     case ElseClauses of
-        {} -> undefined;
-        _ -> eval(ElseClauses, Columns)
+        {} -> {undefined, Env};
+        _ -> eval(ElseClauses, Env)
     end;
-eval_case_clauses([{Cond, Clause} | CaseClauses], ElseClauses, Columns) ->
-    case match_conditions(Cond, Columns) of
+eval_case_clauses([{Cond, Clause} | CaseClauses], ElseClauses, Env) ->
+    {Val, NewEnv} = eval(Cond, Env),
+    case Val of
         true ->
-            eval(Clause, Columns);
+            eval(Clause, NewEnv);
         _ ->
-            eval_case_clauses(CaseClauses, ElseClauses, Columns)
+            eval_case_clauses(CaseClauses, ElseClauses, NewEnv)
     end.
 
-eval_switch_clauses(_CaseOn, [], ElseClauses, Columns) ->
+eval_switch_clauses(_CaseOn, [], ElseClauses, Env) ->
     case ElseClauses of
-        {} -> undefined;
-        _ -> eval(ElseClauses, Columns)
+        {} -> {undefined, Env};
+        _ -> eval(ElseClauses, Env)
     end;
-eval_switch_clauses(CaseOn, [{Cond, Clause} | CaseClauses], ElseClauses, Columns) ->
-    ConResult = eval(Cond, Columns),
-    case eval(CaseOn, Columns) of
+eval_switch_clauses(CaseOn, [{Cond, Clause} | CaseClauses], ElseClauses, Env) ->
+    {ConResult, NewEnv1} = eval(Cond, Env),
+    %% Can CaseOnResult be saved to the next switch clause?
+    {CaseOnResult, NewEnv2} = eval(CaseOn, NewEnv1),
+    case CaseOnResult of
         ConResult ->
-            eval(Clause, Columns);
+            eval(Clause, NewEnv2);
         _ ->
-            eval_switch_clauses(CaseOn, CaseClauses, ElseClauses, Columns)
+            eval_switch_clauses(CaseOn, CaseClauses, ElseClauses, NewEnv2)
     end.
 
 apply_func(Name, Args, Columns) when is_binary(Name) ->
@@ -625,8 +701,39 @@ safe_decode_payload(MaybeJson) ->
 
 ensure_list(List) when is_list(List) -> List;
 ensure_list(_NotList) -> [].
-
+%          {path,[{key,<<"payload">>},{key,<<"params">>},{key,<<"engineWorkTime">>}]}
+nested_put(
+    {path, [{key, <<"payload">>} | _]} = Alias,
+    Val,
+    #{<<"payload">> := {with_cache, #{map := Map, is_field := true}}} = Columns
+) when
+    is_map(Map)
+->
+    erlang:display({nestedPut_xxx_in_payload_map, Alias, Val, Columns}),
+    nested_put(Alias, Val, Columns#{<<"payload">> => Map});
+nested_put(
+    {path, [{key, <<"payload">>} | _]} = Alias,
+    Val,
+    #{<<"payload">> := {with_cache, #{text := PayloadText, is_field := true, map := unparsed}}} =
+        Columns
+) ->
+    erlang:display({nestedPut_xxx_in_payload_text_2, Alias, Val, Columns}),
+    DecodedPayload =
+        try
+            emqx_utils_json:decode(PayloadText, [return_maps])
+        catch
+            _:_ -> PayloadText
+        end,
+    nested_put(Alias, Val, Columns#{<<"payload">> => DecodedPayload});
+nested_put(
+    {path, [{key, <<"payload">>} | _]} = Alias,
+    Val,
+    #{<<"payload">> := {with_cache, #{text := PayloadText, is_field := true}}} = Columns
+) ->
+    erlang:display({nestedPut_xxx_in_payload_text_2, Alias, Val, Columns}),
+    nested_put(Alias, Val, Columns#{<<"payload">> => PayloadText});
 nested_put(Alias, Val, Columns) ->
+    erlang:display({nestedPut_xxx_in_payload_text_3, Alias, Val, Columns}),
     % Columns = ensure_decoded_payload(Alias, Columns0),
     emqx_rule_maps:nested_put(Alias, Val, Columns).
 

@@ -1624,24 +1624,23 @@ t_sqlselect_reasign_payload(_Config) ->
     ),
     %% The same test except that we encode the payload as a JSON binary
     %% This trigger a slightly different code path
-    % ?assertMatch(
-    %     {ok, #{
-    %         <<"payload">> := 3,
-    %         <<"msg">> := <<"hello">>,
-    %         <<"c">> := undefined
-    %     }},
-    %     emqx_rule_sqltester:test(
-    %         #{
-    %             sql => Sql,
-    %             context =>
-    %                 #{
-    %                     payload => emqx_utils_json:encode(PayloadMap),
-    %                     topic => <<"t/a">>
-    %                 }
-    %         }
-    %     )
-    % ),
-    ok.
+    ?assertMatch(
+        {ok, #{
+            <<"payload">> := 3,
+            <<"msg">> := <<"hello">>,
+            <<"c">> := undefined
+        }},
+        emqx_rule_sqltester:test(
+            #{
+                sql => Sql,
+                context =>
+                    #{
+                        payload => emqx_utils_json:encode(PayloadMap),
+                        topic => <<"t/a">>
+                    }
+            }
+        )
+    ).
 
 t_sqlforeach_reasign_payload(_Config) ->
     %% Verify that one can use 'AS' to update the payload and that the original
@@ -2837,7 +2836,8 @@ t_sqlparse_array_range_1(_Config) ->
                 }
             }
         )
-    ).
+    ),
+    ok.
 
 t_sqlparse_array_range_2(_Config) ->
     %% construct a range without 'as'
@@ -3022,6 +3022,7 @@ t_sqlparse_payload_as(_Config) ->
         },
         Res01
     ),
+
     Payload2 = <<"{ \"msgId\": 1002, \"params\": { \"convertTemp\": 20, \"engineSpeed\": 42 } }">>,
     {ok, Res02} = emqx_rule_sqltester:test(
         #{
@@ -3032,20 +3033,19 @@ t_sqlparse_payload_as(_Config) ->
             }
         }
     ),
-    % ?assertMatch(
-    %     #{
-    %         <<"payload">> := #{
-    %             <<"params">> := #{
-    %                 <<"convertTemp">> := 20,
-    %                 <<"engineSpeed">> := 42,
-    %                 <<"engineWorkTime">> := -1,
-    %                 <<"hydOilTem">> := -1
-    %             }
-    %         }
-    %     },
-    %     Res02
-    % )
-    ok.
+    ?assertMatch(
+        #{
+            <<"payload">> := #{
+                <<"params">> := #{
+                    <<"convertTemp">> := 20,
+                    <<"engineSpeed">> := 42,
+                    <<"engineWorkTime">> := -1,
+                    <<"hydOilTem">> := -1
+                }
+            }
+        },
+        Res02
+    ).
 
 t_sqlparse_nested_get(_Config) ->
     Sql =
