@@ -63,7 +63,8 @@
     #{
         templates := templates(),
         pool_name := binary(),
-        connect_timeout := pos_integer()
+        connect_timeout := pos_integer(),
+        piggyback_on_other_bridge := boolean()
     }.
 
 -type clickhouse_config() :: map().
@@ -77,6 +78,24 @@ roots() ->
 
 fields(config) ->
     [
+        %% Boolean field indicating whether link to other bridge is enabled
+        {link_to_other_bridge,
+            hoconsc:mk(
+                boolean(),
+                #{
+                    default => false,
+                    desc => ?DESC("enable")
+                }
+            )},
+        %% Fields for ID/Name of other bridge
+        {link_bridge_name,
+            hoconsc:mk(
+                binary(),
+                #{
+                    required => false,
+                    desc => ?DESC("name")
+                }
+            )},
         {url,
             hoconsc:mk(
                 url(),
@@ -99,7 +118,7 @@ fields(config) ->
                     desc => ?DESC("connect_timeout")
                 }
             )}
-    ] ++ emqx_connector_schema_lib:relational_db_fields().
+    ] ++ emqx_connector_schema_lib:connector_relational_db_fields().
 
 values(post) ->
     maps:merge(values(put), #{name => <<"connector">>});
@@ -129,12 +148,38 @@ callback_mode() -> always_sync.
 -spec on_start(resource_id(), clickhouse_config()) -> {ok, state()} | {error, _}.
 
 on_start(
+    _InstanceID,
+    #{
+        connector_settings := #{
+            link_to_other_bridge := true,
+            link_bridge_name := LinkBridgeName
+        }
+    } = Config
+) ->
+    erlang:display({link_bridge_on_start_xxxxxxxxxxxxxxxxxxxxxx, Config}),
+    LinkPoolName = emqx_bridge_resource:resource_id(
+        <<"clickhouse">>,
+        LinkBridgeName
+    ),
+    Templates = prepare_sql_templates(Config),
+    State = #{
+        templates => Templates,
+        pool_name => LinkPoolName,
+        piggyback_on_other_bridge => true,
+        connect_timeout => 10000
+    },
+    %% We will piggyback on the pool of the other bridge
+    {ok, State};
+on_start(
     InstanceID,
     #{
-        url := URL,
-        database := DB,
-        pool_size := PoolSize,
-        connect_timeout := ConnectTimeout
+        connector_settings := #{
+            link_to_other_bridge := false,
+            url := URL,
+            connect_timeout := ConnectTimeout,
+            pool_size := PoolSize
+        },
+        database := DB
     } = Config
 ) ->
     ?SLOG(info, #{
@@ -156,7 +201,8 @@ on_start(
         State = #{
             pool_name => InstanceID,
             templates => Templates,
-            connect_timeout => ConnectTimeout
+            connect_timeout => ConnectTimeout,
+            piggyback_on_other_bridge => false
         },
         case emqx_resource_pool:start(InstanceID, ?MODULE, Options) of
             ok ->
@@ -274,6 +320,11 @@ connect(Options) ->
 
 -spec on_stop(resource_id(), resource_state()) -> term().
 
+on_stop(InstanceID, #{piggyback_on_other_bridge := true}) ->
+    ?SLOG(info, #{
+        msg => "stopping clickouse connector (piggyback)",
+        connector => InstanceID
+    });
 on_stop(InstanceID, _State) ->
     ?SLOG(info, #{
         msg => "stopping clickouse connector",

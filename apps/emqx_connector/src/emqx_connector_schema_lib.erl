@@ -22,7 +22,9 @@
 -export([
     relational_db_fields/0,
     ssl_fields/0,
-    prepare_statement_fields/0
+    prepare_statement_fields/0,
+    connector_relational_db_fields/0,
+    bridge_db_fields/0
 ]).
 
 -export([
@@ -62,14 +64,21 @@ ssl_fields() ->
     ].
 
 relational_db_fields() ->
+    connector_relational_db_fields() ++ bridge_db_fields().
+
+connector_relational_db_fields() ->
     [
-        {database, fun database/1},
         %% TODO: The `pool_size` for drivers will be deprecated. Ues `worker_pool_size` for emqx_resource
         %% See emqx_resource.hrl
         {pool_size, fun pool_size/1},
         {username, fun username/1},
         {password, fun password/1},
         {auto_reconnect, fun auto_reconnect/1}
+    ].
+
+bridge_db_fields() ->
+    [
+        {database, fun database/1}
     ].
 
 prepare_statement_fields() ->

@@ -97,9 +97,14 @@ fields("config") ->
                     default => #{},
                     desc => ?DESC(emqx_resource_schema, <<"resource_opts">>)
                 }
-            )}
+            )},
+        {connector_settings, #{
+            type => hoconsc:ref(emqx_bridge_clickhouse_connector, config),
+            default => #{<<"link_to_other_bridge">> => false},
+            desc => <<"Connector settings">>
+        }}
     ] ++
-        emqx_bridge_clickhouse_connector:fields(config);
+        emqx_connector_schema_lib:bridge_db_fields();
 fields("creation_opts") ->
     emqx_resource_schema:fields("creation_opts");
 fields("post") ->
