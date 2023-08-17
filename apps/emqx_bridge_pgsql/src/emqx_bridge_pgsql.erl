@@ -80,10 +80,19 @@ fields("config") ->
             mk(
                 binary(),
                 #{desc => ?DESC("local_topic"), default => undefined}
-            )}
-    ] ++ emqx_resource_schema:fields("resource_opts") ++
-        (emqx_connector_pgsql:fields(config) --
-            emqx_connector_schema_lib:prepare_statement_fields());
+            )},
+        {connector_settings, #{
+            %% Make this union
+            type => hoconsc:union([
+                hoconsc:ref(emqx_bridge_pgsql, connector_fields),
+                hoconsc:ref(emqx_resource_schema, share_connector_with_bridge)
+            ]),
+            desc => ?DESC("local_topic")
+        }}
+    ] ++ emqx_resource_schema:fields("resource_opts");
+fields(connector_fields) ->
+    (emqx_connector_pgsql:fields(config) --
+        emqx_connector_schema_lib:prepare_statement_fields());
 fields("post") ->
     fields("post", pgsql);
 fields("put") ->

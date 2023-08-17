@@ -105,11 +105,37 @@ callback_mode() -> always_sync.
 on_start(
     InstId,
     #{
-        server := Server,
-        database := DB,
-        username := User,
-        pool_size := PoolSize,
-        ssl := SSL
+        connector_settings := #{
+            share_connector_with_bridge := LinkBridgeName
+        }
+    } = Config
+) ->
+    ?SLOG(info, #{
+        msg => "starting_postgresql_connector (share connector with other bridge)",
+        connector => InstId,
+        config => emqx_utils:redact(Config)
+    }),
+    State = parse_prepare_sql(Config, InstId),
+    LinkPoolName = emqx_bridge_resource:resource_id(
+        <<"pgsql">>,
+        LinkBridgeName
+    ),
+    {ok,
+        init_prepare(State#{
+            pool_name => LinkPoolName,
+            prepare_statement => #{},
+            piggyback_on_other_bridge => true
+        })};
+on_start(
+    InstId,
+    #{
+        connector_settings := #{
+            server := Server,
+            database := DB,
+            username := User,
+            pool_size := PoolSize,
+            ssl := SSL
+        } = ConnectorSettings
     } = Config
 ) ->
     #{hostname := Host, port := Port} = emqx_schema:parse_server(Server, ?PGSQL_HOST_OPTIONS),
@@ -136,12 +162,14 @@ on_start(
         {host, Host},
         {port, Port},
         {username, User},
-        {password, emqx_secret:wrap(maps:get(password, Config, ""))},
+        {password, emqx_secret:wrap(maps:get(password, ConnectorSettings, ""))},
         {database, DB},
         {auto_reconnect, ?AUTO_RECONNECT_INTERVAL},
         {pool_size, PoolSize}
     ],
-    State = parse_prepare_sql(Config),
+    SendMessagePrepareStatementName =
+        erlang:iolist_to_binary([<<"send_message_">>, InstId]),
+    State = parse_prepare_sql(Config, SendMessagePrepareStatementName),
     case emqx_resource_pool:start(InstId, ?MODULE, Options ++ SslOpts) of
         ok ->
             {ok, init_prepare(State#{pool_name => InstId, prepare_statement => #{}})};
@@ -153,6 +181,11 @@ on_start(
             {error, Reason}
     end.
 
+on_stop(InstanceID, #{piggyback_on_other_bridge := true}) ->
+    ?SLOG(info, #{
+        msg => "stopping clickouse connector (piggyback)",
+        connector => InstanceID
+    });
 on_stop(InstId, _State) ->
     ?SLOG(info, #{
         msg => "stopping postgresql connector",
@@ -192,11 +225,17 @@ pgsql_query_type(_) ->
 on_batch_query(
     InstId,
     BatchReq,
-    #{pool_name := PoolName, params_tokens := Tokens, prepare_statement := Sts} = State
+    #{
+        pool_name := PoolName,
+        params_tokens := Tokens,
+        prepare_statement := Sts,
+        send_message_prepare_statement_name := SendMessagePrepareStatementName
+    } = State
 ) ->
     case BatchReq of
         [{Key, _} = Request | _] ->
-            BinKey = to_bin(Key),
+            OrgBinKey = to_bin(Key),
+            BinKey = translate_send_key(OrgBinKey, SendMessagePrepareStatementName),
             case maps:get(BinKey, Tokens, undefined) of
                 undefined ->
                     Log = #{
@@ -233,14 +272,28 @@ proc_sql_params(query, SQLOrKey, Params, _State) ->
     {SQLOrKey, Params};
 proc_sql_params(prepared_query, SQLOrKey, Params, _State) ->
     {SQLOrKey, Params};
-proc_sql_params(TypeOrKey, SQLOrData, Params, #{params_tokens := ParamsTokens}) ->
-    Key = to_bin(TypeOrKey),
+proc_sql_params(
+    TypeOrKey,
+    SQLOrData,
+    Params,
+    #{
+        params_tokens := ParamsTokens,
+        send_message_prepare_statement_name := SendMessagePrepareStatementName
+    }
+) ->
+    OrgKey = to_bin(TypeOrKey),
+    Key = translate_send_key(OrgKey, SendMessagePrepareStatementName),
     case maps:get(Key, ParamsTokens, undefined) of
         undefined ->
             {SQLOrData, Params};
         Tokens ->
             {Key, emqx_placeholder:proc_sql(Tokens, SQLOrData)}
     end.
+
+translate_send_key(<<"send_message">>, SendMessagePrepareStatementName) ->
+    SendMessagePrepareStatementName;
+translate_send_key(Key, _) ->
+    Key.
 
 on_sql_query(InstId, PoolName, Type, NameOrSQL, Data) ->
     try ecpool:pick_and_do(PoolName, {?MODULE, Type, [NameOrSQL, Data]}, no_handover) of
@@ -285,7 +338,29 @@ on_sql_query(InstId, PoolName, Type, NameOrSQL, Data) ->
             {error, {unrecoverable_error, invalid_request}}
     end.
 
-on_get_status(_InstId, #{pool_name := PoolName} = State) ->
+on_get_status(_InstanceID, #{
+    piggyback_on_other_bridge := true,
+    pool_name := ResourceId
+}) ->
+    case emqx_resource_manager:health_check(ResourceId) of
+        {ok, Status} ->
+            Status;
+        {error, Reason} ->
+            ?SLOG(error, #{
+                msg => "postgresql_connector_get_status_failed (piggyback)",
+                reason => Reason,
+                resource_id => ResourceId,
+                piggyback => true,
+                pool_name => ResourceId
+            }),
+            {disconnected, #{}, Reason}
+    end;
+on_get_status(
+    _InstId,
+    #{
+        pool_name := PoolName
+    } = State
+) ->
     case emqx_resource_pool:health_check_workers(PoolName, fun ?MODULE:do_get_status/1) of
         true ->
             case do_check_prepares(State) of
@@ -311,9 +386,11 @@ do_get_status(Conn) ->
 do_check_prepares(
     #{
         pool_name := PoolName,
-        prepare_sql := #{<<"send_message">> := SQL}
+        send_message_prepare_statement_name := SendMessagePrepareStatementName,
+        prepare_sql := PrepareSQLMap
     } = State
-) ->
+) when is_map_key(SendMessagePrepareStatementName, PrepareSQLMap) ->
+    SQL = maps:get(SendMessagePrepareStatementName, PrepareSQLMap),
     WorkerPids = [Worker || {_WorkerName, Worker} <- ecpool:workers(PoolName)],
     case validate_table_existence(WorkerPids, SQL) of
         ok ->
@@ -422,18 +499,21 @@ conn_opts([Opt = {ssl_opts, _} | Opts], Acc) ->
 conn_opts([_Opt | Opts], Acc) ->
     conn_opts(Opts, Acc).
 
-parse_prepare_sql(Config) ->
+parse_prepare_sql(Config, SendMessageAlias) ->
     SQL =
         case maps:get(prepare_statement, Config, undefined) of
             undefined ->
                 case maps:get(sql, Config, undefined) of
                     undefined -> #{};
-                    Template -> #{<<"send_message">> => Template}
+                    Template -> #{SendMessageAlias => Template}
                 end;
             Any ->
                 Any
         end,
-    parse_prepare_sql(maps:to_list(SQL), #{}, #{}).
+    maps:merge(
+        parse_prepare_sql(maps:to_list(SQL), #{}, #{}),
+        #{send_message_prepare_statement_name => SendMessageAlias}
+    ).
 
 parse_prepare_sql([{Key, H} | T], Prepares, Tokens) ->
     {PrepareSQL, ParamsTokens} = emqx_placeholder:preproc_sql(H, '$n'),

@@ -130,7 +130,7 @@ callback_mode() -> always_sync.
 -spec on_start(resource_id(), clickhouse_config()) -> {ok, state()} | {error, _}.
 
 on_start(
-    _InstanceID,
+    InstanceID,
     #{
         connector_settings := #{
             share_connector_with_bridge := LinkBridgeName
