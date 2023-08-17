@@ -45,7 +45,18 @@ fields("resource_opts") ->
             )}
     ];
 fields("creation_opts") ->
-    create_opts([]).
+    create_opts([]);
+fields(share_connector_with_bridge) ->
+    [
+        {share_connector_with_bridge,
+            mk(
+                binary(),
+                #{
+                    required => true,
+                    desc => ?DESC("share_connector_with_bridge")
+                }
+            )}
+    ].
 
 create_opts(Overrides) ->
     override(
@@ -212,7 +223,8 @@ buffer_seg_bytes(required) -> false;
 buffer_seg_bytes(importance) -> ?IMPORTANCE_HIDDEN;
 buffer_seg_bytes(_) -> undefined.
 
-desc("creation_opts") -> ?DESC("creation_opts").
+desc("creation_opts") -> ?DESC("creation_opts");
+desc(_) -> undefined.
 
 get_value_with_unit(Value) when is_integer(Value) ->
     <<(erlang:integer_to_binary(Value))/binary, "ms">>;

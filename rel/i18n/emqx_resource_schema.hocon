@@ -107,4 +107,10 @@ For bridges only have ingress direction data flow, it can be set to 0 otherwise 
 worker_pool_size.label:
 """Buffer Pool Size"""
 
+share_connector_with_bridge.label:
+"""Share Connection with Bridge"""
+
+share_connector_with_bridge.desc:
+"""By specifying the name of another bridge of the same type here, you can share the connection to the external service with that bridge."""
+
 }

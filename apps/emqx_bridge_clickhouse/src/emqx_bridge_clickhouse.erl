@@ -99,12 +99,14 @@ fields("config") ->
                 }
             )},
         {connector_settings, #{
-            type => hoconsc:ref(emqx_bridge_clickhouse_connector, config),
-            default => #{<<"link_to_other_bridge">> => false},
-            desc => <<"Connector settings">>
+            %% Make this union
+            type => hoconsc:union([
+                hoconsc:ref(emqx_bridge_clickhouse_connector, config),
+                hoconsc:ref(emqx_resource_schema, share_connector_with_bridge)
+            ]),
+            desc => <<"Connector Settings">>
         }}
-    ] ++
-        emqx_connector_schema_lib:bridge_db_fields();
+    ];
 fields("creation_opts") ->
     emqx_resource_schema:fields("creation_opts");
 fields("post") ->

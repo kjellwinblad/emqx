@@ -78,24 +78,6 @@ roots() ->
 
 fields(config) ->
     [
-        %% Boolean field indicating whether link to other bridge is enabled
-        {link_to_other_bridge,
-            hoconsc:mk(
-                boolean(),
-                #{
-                    default => false,
-                    desc => ?DESC("enable")
-                }
-            )},
-        %% Fields for ID/Name of other bridge
-        {link_bridge_name,
-            hoconsc:mk(
-                binary(),
-                #{
-                    required => false,
-                    desc => ?DESC("name")
-                }
-            )},
         {url,
             hoconsc:mk(
                 url(),
@@ -118,7 +100,7 @@ fields(config) ->
                     desc => ?DESC("connect_timeout")
                 }
             )}
-    ] ++ emqx_connector_schema_lib:connector_relational_db_fields().
+    ] ++ emqx_connector_schema_lib:relational_db_fields().
 
 values(post) ->
     maps:merge(values(put), #{name => <<"connector">>});
@@ -151,12 +133,15 @@ on_start(
     _InstanceID,
     #{
         connector_settings := #{
-            link_to_other_bridge := true,
-            link_bridge_name := LinkBridgeName
+            share_connector_with_bridge := LinkBridgeName
         }
     } = Config
 ) ->
-    erlang:display({link_bridge_on_start_xxxxxxxxxxxxxxxxxxxxxx, Config}),
+    ?SLOG(info, #{
+        msg => "starting_clickhouse_connector (share connector with other bridge)",
+        connector => InstanceID,
+        config => emqx_utils:redact(Config)
+    }),
     LinkPoolName = emqx_bridge_resource:resource_id(
         <<"clickhouse">>,
         LinkBridgeName
@@ -174,12 +159,11 @@ on_start(
     InstanceID,
     #{
         connector_settings := #{
-            link_to_other_bridge := false,
             url := URL,
             connect_timeout := ConnectTimeout,
-            pool_size := PoolSize
-        },
-        database := DB
+            pool_size := PoolSize,
+            database := DB
+        }
     } = Config
 ) ->
     ?SLOG(info, #{
@@ -336,6 +320,23 @@ on_stop(InstanceID, _State) ->
 %% on_get_status emqx_resouce callback and related functions
 %% -------------------------------------------------------------------
 
+on_get_status(_InstanceID, #{
+    piggyback_on_other_bridge := true,
+    pool_name := ResourceId
+}) ->
+    case emqx_resource_manager:health_check(ResourceId) of
+        {ok, Status} ->
+            Status;
+        {error, Reason} ->
+            ?SLOG(error, #{
+                msg => "clickhouse_connector_get_status_failed",
+                reason => Reason,
+                resource_id => ResourceId,
+                piggyback => true,
+                pool_name => ResourceId
+            }),
+            {disconnected, #{}, Reason}
+    end;
 on_get_status(
     _InstanceID,
     #{pool_name := PoolName, connect_timeout := Timeout} = State
