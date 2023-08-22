@@ -160,12 +160,21 @@ fields("config_producer") ->
 fields("config_consumer") ->
     fields(kafka_consumer);
 fields(kafka_producer) ->
-    fields("config") ++ fields(producer_opts);
+    [
+        {connector_settings, #{
+            %% Make this union
+            type => hoconsc:union([
+                hoconsc:ref(?MODULE, "config"),
+                hoconsc:ref(emqx_resource_schema, share_connector_with_bridge)
+            ]),
+            desc => <<"Connector Settings">>
+        }}
+    ] ++
+        fields(producer_opts);
 fields(kafka_consumer) ->
     fields("config") ++ fields(consumer_opts);
 fields("config") ->
     [
-        {enable, mk(boolean(), #{desc => ?DESC("config_enable"), default => true})},
         {bootstrap_hosts,
             mk(
                 binary(),
@@ -262,6 +271,7 @@ fields(producer_opts) ->
         %% Note: there's an implicit convention in `emqx_bridge' that,
         %% for egress bridges with this config, the published messages
         %% will be forwarded to such bridges.
+        {enable, mk(boolean(), #{desc => ?DESC("config_enable"), default => true})},
         {local_topic, mk(binary(), #{required => false, desc => ?DESC(mqtt_topic)})},
         {kafka,
             mk(ref(producer_kafka_opts), #{
@@ -408,6 +418,7 @@ fields(producer_buffer) ->
     ];
 fields(consumer_opts) ->
     [
+        {enable, mk(boolean(), #{desc => ?DESC("config_enable"), default => true})},
         {kafka,
             mk(ref(consumer_kafka_opts), #{required => false, desc => ?DESC(consumer_kafka_opts)})},
         {topic_mapping,

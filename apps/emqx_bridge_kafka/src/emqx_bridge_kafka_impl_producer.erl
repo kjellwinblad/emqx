@@ -27,6 +27,7 @@
 %% Allocatable resources
 -define(kafka_resource_id, kafka_resource_id).
 -define(kafka_client_id, kafka_client_id).
+-define(kafka_hosts, kafka_hosts).
 -define(kafka_producers, kafka_producers).
 
 %% TODO: rename this to `kafka_producer' after alias support is added
@@ -43,20 +44,80 @@ callback_mode() -> async_if_possible.
 %% @doc Config schema is defined in emqx_bridge_kafka.
 on_start(InstId, Config) ->
     #{
-        authentication := Auth,
-        bootstrap_hosts := Hosts0,
         bridge_name := BridgeName,
-        connect_timeout := ConnTimeout,
+        connector_settings := #{
+            % authentication := Auth,
+            bootstrap_hosts := Hosts0
+            % connect_timeout := ConnTimeout,
+            % metadata_request_timeout := MetaReqTimeout,
+            % min_metadata_refresh_interval := MinMetaRefreshInterval,
+            % socket_opts := SocketOpts,
+            % ssl := SSL
+        } =
+            ConnectorSettings,
         kafka := KafkaConfig = #{
-            message := MessageTemplate,
-            topic := KafkaTopic,
-            sync_query_timeout := SyncQueryTimeout
-        },
-        metadata_request_timeout := MetaReqTimeout,
-        min_metadata_refresh_interval := MinMetaRefreshInterval,
-        socket_opts := SocketOpts,
-        ssl := SSL
+            % message := MessageTemplate,
+            % topic := KafkaTopic,
+            % sync_query_timeout := SyncQueryTimeout
+        }
     } = Config,
+    % ClientId = emqx_bridge_kafka_impl:make_client_id(BridgeType, BridgeName),
+    % ClientConfig = #{
+    %     min_metadata_refresh_interval => MinMetaRefreshInterval,
+    %     connect_timeout => ConnTimeout,
+    %     client_id => ClientId,
+    %     request_timeout => MetaReqTimeout,
+    %     extra_sock_opts => emqx_bridge_kafka_impl:socket_opts(SocketOpts),
+    %     sasl => emqx_bridge_kafka_impl:sasl(Auth),
+    %     ssl => ssl(SSL)
+    % },
+    Hosts = emqx_bridge_kafka_impl:hosts(Hosts0),
+    %% Save hosts as a resouce so that we can use it to check the health of the connection
+    ok = emqx_resource:allocate_resource(InstId, ?kafka_hosts, Hosts),
+    %% TODO: Do we need to check the health of the connection here?
+    % case do_get_topic_status(Hosts, KafkaConfig, KafkaTopic) of
+    %     unhealthy_target ->
+    %         throw(unhealthy_target);
+    %     _ ->
+    %         ok
+    % end,
+    BridgeType = ?BRIDGE_TYPE,
+    {ok, ClientId} = create_kafka_client(
+        InstId,
+        BridgeType,
+        BridgeName,
+        ConnectorSettings
+    ),
+    % case wolff:ensure_supervised_client(ClientId, Hosts, ClientConfig) of
+    %     {ok, _} ->
+    %         ?SLOG(info, #{
+    %             msg => "kafka_client_started",
+    %             instance_id => InstId,
+    %             kafka_hosts => Hosts
+    %         });
+    %     {error, Reason} ->
+    %         ?SLOG(error, #{
+    %             msg => "failed_to_start_kafka_client",
+    %             instance_id => InstId,
+    %             kafka_hosts => Hosts,
+    %             reason => Reason
+    %         }),
+    %         throw(failed_to_start_kafka_client)
+    % end,
+    %% Check if this is a dry run
+    on_start_create_producers(InstId, BridgeName, ClientId, Hosts, KafkaConfig).
+
+on_start_create_producers(
+    InstId,
+    BridgeName,
+    ClientId,
+    Hosts,
+    KafkaConfig = #{
+        message := MessageTemplate,
+        topic := KafkaTopic,
+        sync_query_timeout := SyncQueryTimeout
+    }
+) ->
     KafkaHeadersTokens = preproc_kafka_headers(maps:get(kafka_headers, KafkaConfig, undefined)),
     KafkaExtHeadersTokens = preproc_ext_headers(maps:get(kafka_ext_headers, KafkaConfig, [])),
     KafkaHeadersValEncodeMode = maps:get(kafka_header_value_encode_mode, KafkaConfig, none),
@@ -64,41 +125,6 @@ on_start(InstId, Config) ->
     ResourceId = emqx_bridge_resource:resource_id(BridgeType, BridgeName),
     ok = emqx_resource:allocate_resource(InstId, ?kafka_resource_id, ResourceId),
     _ = maybe_install_wolff_telemetry_handlers(ResourceId),
-    Hosts = emqx_bridge_kafka_impl:hosts(Hosts0),
-    ClientId = emqx_bridge_kafka_impl:make_client_id(BridgeType, BridgeName),
-    ok = emqx_resource:allocate_resource(InstId, ?kafka_client_id, ClientId),
-    ClientConfig = #{
-        min_metadata_refresh_interval => MinMetaRefreshInterval,
-        connect_timeout => ConnTimeout,
-        client_id => ClientId,
-        request_timeout => MetaReqTimeout,
-        extra_sock_opts => emqx_bridge_kafka_impl:socket_opts(SocketOpts),
-        sasl => emqx_bridge_kafka_impl:sasl(Auth),
-        ssl => ssl(SSL)
-    },
-    case do_get_topic_status(Hosts, KafkaConfig, KafkaTopic) of
-        unhealthy_target ->
-            throw(unhealthy_target);
-        _ ->
-            ok
-    end,
-    case wolff:ensure_supervised_client(ClientId, Hosts, ClientConfig) of
-        {ok, _} ->
-            ?SLOG(info, #{
-                msg => "kafka_client_started",
-                instance_id => InstId,
-                kafka_hosts => Hosts
-            });
-        {error, Reason} ->
-            ?SLOG(error, #{
-                msg => "failed_to_start_kafka_client",
-                instance_id => InstId,
-                kafka_hosts => Hosts,
-                reason => Reason
-            }),
-            throw(failed_to_start_kafka_client)
-    end,
-    %% Check if this is a dry run
     TestIdStart = string:find(InstId, ?TEST_ID_PREFIX),
     IsDryRun =
         case TestIdStart of
@@ -151,6 +177,46 @@ on_start(InstId, Config) ->
                 " the connection parameters."
             )
     end.
+
+create_kafka_client(InstId, BridgeType, BridgeName, ConnectorSettings) ->
+    #{
+        authentication := Auth,
+        bootstrap_hosts := Hosts0,
+        connect_timeout := ConnTimeout,
+        metadata_request_timeout := MetaReqTimeout,
+        min_metadata_refresh_interval := MinMetaRefreshInterval,
+        socket_opts := SocketOpts,
+        ssl := SSL
+    } = ConnectorSettings,
+    Hosts = emqx_bridge_kafka_impl:hosts(Hosts0),
+    ClientId = emqx_bridge_kafka_impl:make_client_id(BridgeType, BridgeName),
+    ClientConfig = #{
+        min_metadata_refresh_interval => MinMetaRefreshInterval,
+        connect_timeout => ConnTimeout,
+        client_id => ClientId,
+        request_timeout => MetaReqTimeout,
+        extra_sock_opts => emqx_bridge_kafka_impl:socket_opts(SocketOpts),
+        sasl => emqx_bridge_kafka_impl:sasl(Auth),
+        ssl => ssl(SSL)
+    },
+    case wolff:ensure_supervised_client(ClientId, Hosts, ClientConfig) of
+        {ok, _} ->
+            ?SLOG(info, #{
+                msg => "kafka_client_started",
+                instance_id => InstId,
+                kafka_hosts => Hosts
+            }),
+            ok = emqx_resource:allocate_resource(InstId, ?kafka_client_id, ClientId);
+        {error, Reason} ->
+            ?SLOG(error, #{
+                msg => "failed_to_start_kafka_client",
+                instance_id => InstId,
+                kafka_hosts => Hosts,
+                reason => Reason
+            }),
+            throw(failed_to_start_kafka_client)
+    end,
+    {ok, ClientId}.
 
 on_stop(InstanceId, _State) ->
     case emqx_resource:get_allocated_resources(InstanceId) of
