@@ -105,6 +105,7 @@ on_start(InstId, Config) ->
     Hosts = emqx_bridge_kafka_impl:hosts(Hosts0),
     %% Save hosts as a resouce so that we can use it to check the health of the connection
     erlang:display({starting_bridge_kafka_producer_with_connection, InstId, BridgeName, Hosts}),
+    timer:sleep(10000),
     ok = emqx_resource:allocate_resource(InstId, ?kafka_hosts, Hosts),
     %% TODO: Do we need to check the health of the connection here?
     % case do_get_topic_status(Hosts, KafkaConfig, KafkaTopic) of
@@ -253,12 +254,14 @@ create_kafka_client(InstId, BridgeType, BridgeName, ConnectorSettings) ->
     {ok, ClientId}.
 
 on_stop(InstanceId, _State) ->
+    erlang:display({stopping_bridge_kafka_producer, InstanceId}),
     case emqx_resource:get_allocated_resources(InstanceId) of
         #{
             ?kafka_client_id := ClientId,
             ?kafka_producers := Producers,
             ?kafka_resource_id := ResourceId
         } ->
+            erlang:display({here0}),
             _ = with_log_at_error(
                 fun() -> wolff:stop_and_delete_supervised_producers(Producers) end,
                 #{
@@ -281,7 +284,31 @@ on_stop(InstanceId, _State) ->
                 }
             ),
             ok;
+        #{
+            ?kafka_producers := Producers,
+            ?kafka_resource_id := ResourceId
+        } ->
+            erlang:display({here1}),
+            erlang:display({before_log_at}),
+            _ = with_log_at_error(
+                fun() -> wolff:stop_and_delete_supervised_producers(Producers) end,
+                #{
+                    msg => "failed_to_delete_kafka_producer",
+                    client_id => erlang:iolist_to_binary(
+                        io_lib:format("Shared with other bridge", [])
+                    )
+                }
+            ),
+            _ = with_log_at_error(
+                fun() -> uninstall_telemetry_handlers(ResourceId) end,
+                #{
+                    msg => "failed_to_uninstall_telemetry_handlers",
+                    resource_id => ResourceId
+                }
+            ),
+            ok;
         #{?kafka_client_id := ClientId, ?kafka_resource_id := ResourceId} ->
+            erlang:display({here2}),
             _ = with_log_at_error(
                 fun() -> wolff:stop_and_delete_supervised_client(ClientId) end,
                 #{
@@ -298,6 +325,7 @@ on_stop(InstanceId, _State) ->
             ),
             ok;
         #{?kafka_resource_id := ResourceId} ->
+            erlang:display({here3}),
             _ = with_log_at_error(
                 fun() -> uninstall_telemetry_handlers(ResourceId) end,
                 #{
@@ -309,6 +337,7 @@ on_stop(InstanceId, _State) ->
         _ ->
             ok
     end,
+    erlang:display({stopped_bridge_kafka_producer, InstanceId}),
     ?tp(kafka_producer_stopped, #{instance_id => InstanceId}),
     ok.
 
@@ -581,8 +610,12 @@ make_producer_name(BridgeName, IsDryRun) ->
     end.
 
 with_log_at_error(Fun, Log) ->
+    erlang:display({with_log_at_error}),
     try
-        Fun()
+        erlang:display({log_at_error_fun, Fun, Log}),
+        Result = Fun(),
+        erlang:display({log_at_error_result, Result}),
+        Result
     catch
         C:E ->
             ?SLOG(error, Log#{
