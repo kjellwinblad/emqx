@@ -42,6 +42,37 @@ query_mode(_) ->
 callback_mode() -> async_if_possible.
 
 %% @doc Config schema is defined in emqx_bridge_kafka.
+on_start(
+    InstId,
+    #{
+        bridge_name := BridgeName,
+        connector_settings := #{
+            share_connector_with_bridge := LinkBridgeName
+        },
+        kafka := KafkaConfig
+    }
+) ->
+    LinkBridgeResourceId = emqx_bridge_resource:resource_id(
+        <<"kafka">>,
+        LinkBridgeName
+    ),
+    erlang:display({starting_link_bridge_kafka_producer, LinkBridgeName, LinkBridgeResourceId}),
+    {ClientId, Hosts} =
+        case emqx_resource:get_allocated_resources(LinkBridgeResourceId) of
+            #{
+                ?kafka_client_id := LinkedClientId,
+                ?kafka_hosts := LinkedHosts
+            } ->
+                {LinkedClientId, LinkedHosts};
+            _ ->
+                throw(
+                    {error,
+                        erlang:iolist_to_binary(
+                            io_lib:format("Bridge ~s is not started", [LinkBridgeName])
+                        )}
+                )
+        end,
+    on_start_create_producers(InstId, BridgeName, ClientId, Hosts, KafkaConfig);
 on_start(InstId, Config) ->
     #{
         bridge_name := BridgeName,
@@ -73,6 +104,7 @@ on_start(InstId, Config) ->
     % },
     Hosts = emqx_bridge_kafka_impl:hosts(Hosts0),
     %% Save hosts as a resouce so that we can use it to check the health of the connection
+    erlang:display({starting_bridge_kafka_producer_with_connection, InstId, BridgeName, Hosts}),
     ok = emqx_resource:allocate_resource(InstId, ?kafka_hosts, Hosts),
     %% TODO: Do we need to check the health of the connection here?
     % case do_get_topic_status(Hosts, KafkaConfig, KafkaTopic) of
@@ -105,7 +137,9 @@ on_start(InstId, Config) ->
     %         throw(failed_to_start_kafka_client)
     % end,
     %% Check if this is a dry run
-    on_start_create_producers(InstId, BridgeName, ClientId, Hosts, KafkaConfig).
+    Result = on_start_create_producers(InstId, BridgeName, ClientId, Hosts, KafkaConfig),
+    erlang:display({started_bridge_kafka_producer_with_connection, BridgeName}),
+    Result.
 
 on_start_create_producers(
     InstId,
