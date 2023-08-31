@@ -521,6 +521,10 @@ format_action(Actions) ->
 
 do_format_action({bridge, BridgeType, BridgeName, _ResId}) ->
     emqx_bridge_resource:bridge_id(BridgeType, BridgeName);
+do_format_action(
+    {bridge_override_insert_template, Type, Name, _ResourceId, _InsertTemplate, _UniqueTag}
+) ->
+    emqx_bridge_resource:bridge_id(Type, Name);
 do_format_action(#{mod := Mod, func := Func, args := Args}) ->
     #{
         function => printable_function_name(Mod, Func),

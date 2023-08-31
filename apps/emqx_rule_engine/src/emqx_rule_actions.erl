@@ -42,6 +42,18 @@
 %%--------------------------------------------------------------------
 %% APIs
 %%--------------------------------------------------------------------
+parse_action(#{bridge_id := BridgeId, insert_template := InsertTemplate}) ->
+    %% Create an unique tag for the template
+    UniqueTag = emqx_guid:to_hexstr(emqx_guid:gen()),
+    {Type, Name} = emqx_bridge_resource:parse_bridge_id(BridgeId),
+    ResourceId = emqx_bridge_resource:resource_id(Type, Name),
+    ok = emqx_bridge:create_buffer_workers_for_tag(
+        Type,
+        Name,
+        ResourceId,
+        UniqueTag
+    ),
+    {bridge_override_insert_template, Type, Name, ResourceId, InsertTemplate, UniqueTag};
 parse_action(#{function := ActionFunc} = Action) ->
     {Mod, Func} = parse_action_func(ActionFunc),
     #{

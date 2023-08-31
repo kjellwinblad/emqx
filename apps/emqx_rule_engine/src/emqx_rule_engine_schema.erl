@@ -91,6 +91,25 @@ fields("rules") ->
             )},
         {"metadata", ?HOCON(map(), #{desc => ?DESC("rules_metadata")})}
     ];
+fields("bridge_override_insert_template") ->
+    [
+        {bridge_id,
+            ?HOCON(
+                binary(),
+                #{
+                    required => true,
+                    example => "my_bridge"
+                }
+            )},
+        {insert_template,
+            ?HOCON(
+                binary(),
+                #{
+                    desc => ?DESC("user_provided_function_args"),
+                    required => true
+                }
+            )}
+    ];
 fields("builtin_action_republish") ->
     [
         {function, ?HOCON(republish, #{desc => ?DESC("republish_function")})},
@@ -204,7 +223,8 @@ actions() ->
         binary(),
         ?R_REF("builtin_action_republish"),
         ?R_REF("builtin_action_console"),
-        ?R_REF("user_provided_function")
+        ?R_REF("user_provided_function"),
+        ?R_REF("bridge_override_insert_template")
     ].
 
 qos() ->

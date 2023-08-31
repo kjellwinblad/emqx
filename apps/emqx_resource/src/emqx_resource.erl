@@ -101,7 +101,8 @@
     %% stop the instance
     call_stop/3,
     %% get the query mode of the resource
-    query_mode/3
+    query_mode/3,
+    call_maybe_install_insert_template/5
 ]).
 
 %% list all the instances, id only.
@@ -134,7 +135,8 @@
     on_query_async/4,
     on_batch_query_async/4,
     on_get_status/2,
-    query_mode/1
+    query_mode/1,
+    maybe_install_insert_template/4
 ]).
 
 %% when calling emqx_resource:start/1
@@ -176,6 +178,10 @@
     | {resource_status(), resource_state(), term()}.
 
 -callback query_mode(Config :: term()) -> query_mode().
+
+-callback maybe_install_insert_template(
+    ResId :: term(), ResourceState :: term(), UniqueTag :: term(), InsertTemplate :: term()
+) -> {ok, NewState :: term()}.
 
 -spec list_types() -> [module()].
 list_types() ->
@@ -403,6 +409,18 @@ call_start(ResId, Mod, Config) ->
     | {error, term()}.
 call_health_check(ResId, Mod, ResourceState) ->
     ?SAFE_CALL(Mod:on_get_status(ResId, ResourceState)).
+
+call_maybe_install_insert_template(ResId, Mod, ResourceState, UniqueTag, InsertTemplate) ->
+    %% Check if maybe_install_insert_template is exported
+    case erlang:function_exported(Mod, maybe_install_insert_template, 4) of
+        true ->
+            {ok, NewResourceState} = Mod:maybe_install_insert_template(
+                ResId, ResourceState, UniqueTag, InsertTemplate
+            ),
+            NewResourceState;
+        false ->
+            ResourceState
+    end.
 
 -spec call_stop(resource_id(), module(), resource_state()) -> term().
 call_stop(ResId, Mod, ResourceState) ->

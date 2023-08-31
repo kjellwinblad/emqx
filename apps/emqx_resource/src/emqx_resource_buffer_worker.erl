@@ -184,26 +184,32 @@ resume(ServerRef) ->
 flush_worker(ServerRef) ->
     gen_statem:cast(ServerRef, flush).
 
+buffer_worker_id_to_resource_id({ResourceId, _Tag}) ->
+    ResourceId;
+buffer_worker_id_to_resource_id(BufferWorkerId) ->
+    BufferWorkerId.
+
 -spec init({id(), pos_integer(), map()}) -> gen_statem:init_result(state(), data()).
-init({Id, Index, Opts}) ->
+init({BufferWorkedId, Index, Opts}) ->
     process_flag(trap_exit, true),
-    true = gproc_pool:connect_worker(Id, {Id, Index}),
+    true = gproc_pool:connect_worker(BufferWorkedId, {BufferWorkedId, Index}),
+    ResourceId = buffer_worker_id_to_resource_id(BufferWorkedId),
     BatchSize = maps:get(batch_size, Opts, ?DEFAULT_BATCH_SIZE),
-    QueueOpts = replayq_opts(Id, Index, Opts),
+    QueueOpts = replayq_opts(BufferWorkedId, Index, Opts),
     Queue = replayq:open(QueueOpts),
-    emqx_resource_metrics:queuing_set(Id, Index, queue_count(Queue)),
-    emqx_resource_metrics:inflight_set(Id, Index, 0),
+    emqx_resource_metrics:queuing_set(ResourceId, Index, queue_count(Queue)),
+    emqx_resource_metrics:inflight_set(ResourceId, Index, 0),
     InflightWinSize = maps:get(inflight_window, Opts, ?DEFAULT_INFLIGHT),
     InflightTID = inflight_new(InflightWinSize),
     HealthCheckInterval = maps:get(health_check_interval, Opts, ?HEALTHCHECK_INTERVAL),
     RequestTTL = maps:get(request_ttl, Opts, ?DEFAULT_REQUEST_TTL),
     BatchTime0 = maps:get(batch_time, Opts, ?DEFAULT_BATCH_TIME),
-    BatchTime = adjust_batch_time(Id, RequestTTL, BatchTime0),
+    BatchTime = adjust_batch_time(BufferWorkedId, RequestTTL, BatchTime0),
     DefaultResumeInterval = default_resume_interval(RequestTTL, HealthCheckInterval),
     ResumeInterval = maps:get(resume_interval, Opts, DefaultResumeInterval),
     MetricsFlushInterval = maps:get(metrics_flush_interval, Opts, ?DEFAULT_METRICS_FLUSH_INTERVAL),
     Data0 = #{
-        id => Id,
+        id => ResourceId,
         index => Index,
         inflight_tid => InflightTID,
         async_workers => #{},
@@ -217,7 +223,7 @@ init({Id, Index, Opts}) ->
         metrics_tref => undefined
     },
     Data = ensure_metrics_flush_timer(Data0),
-    ?tp(buffer_worker_init, #{id => Id, index => Index, queue_opts => QueueOpts}),
+    ?tp(buffer_worker_init, #{id => BufferWorkedId, index => Index, queue_opts => QueueOpts}),
     {ok, running, Data}.
 
 running(enter, _, #{tref := _Tref} = Data) ->
@@ -317,7 +323,15 @@ code_change(_OldVsn, State, _Extra) ->
     end
 ).
 
-pick_call(Id, Key, Query = {_, _, QueryOpts}, Timeout) ->
+worker_id(Id, {send_message, _}) ->
+    Id;
+worker_id(Id, {Tag, _}) ->
+    {Id, Tag};
+worker_id(Id, _Tag) ->
+    Id.
+
+pick_call(Id0, Key, Query = {_, SendMessage, QueryOpts}, Timeout) ->
+    Id = worker_id(Id0, SendMessage),
     ?PICK(Id, Key, Pid, begin
         MRef = erlang:monitor(process, Pid, [{alias, reply_demonitor}]),
         ReplyTo = {fun ?MODULE:reply_call/2, [MRef]},
@@ -339,7 +353,8 @@ pick_call(Id, Key, Query = {_, _, QueryOpts}, Timeout) ->
         end
     end).
 
-pick_cast(Id, Key, Query = {query, _Request, QueryOpts}) ->
+pick_cast(Id0, Key, Query = {query, Request, QueryOpts}) ->
+    Id = worker_id(Id0, Request),
     ?PICK(Id, Key, Pid, begin
         ReplyTo = maps:get(reply_to, QueryOpts, undefined),
         erlang:send(Pid, ?SEND_REQ(ReplyTo, Query)),
@@ -1873,7 +1888,7 @@ replayq_opts(Id, Index, Opts) ->
             SegBytes0 = maps:get(buffer_seg_bytes, Opts, TotalBytes),
             SegBytes = min(SegBytes0, TotalBytes),
             #{
-                dir => disk_queue_dir(Id, Index),
+                dir => disk_queue_dir(erlang:term_to_binary(Id), Index),
                 marshaller => fun ?MODULE:queue_item_marshaller/1,
                 max_total_bytes => TotalBytes,
                 %% we don't want to retain the queue after

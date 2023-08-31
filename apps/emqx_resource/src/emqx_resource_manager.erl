@@ -29,7 +29,8 @@
     restart/2,
     start/2,
     stop/1,
-    health_check/1
+    health_check/1,
+    maybe_install_insert_template/3
 ]).
 
 -export([
@@ -289,6 +290,9 @@ list_group(Group) ->
 health_check(ResId) ->
     safe_call(ResId, health_check, ?T_OPERATION).
 
+maybe_install_insert_template(ResId, UniqueTag, InsertTemplate) ->
+    safe_call(ResId, {maybe_install_insert_template, UniqueTag, InsertTemplate}, ?T_OPERATION).
+
 %% Server start/stop callbacks
 
 %% @doc Function called from the supervisor to actually start the server
@@ -404,6 +408,11 @@ handle_event(state_timeout, auto_retry, disconnected, Data) ->
 handle_event(enter, _OldState, stopped = State, Data) ->
     ok = log_state_consistency(State, Data),
     {keep_state_and_data, []};
+handle_event(
+    {call, From}, {maybe_install_insert_template, UniqueTag, InsertTemplate}, _State, Data
+) ->
+    %erlang:halt(),
+    handle_maybe_install_insert_template(From, UniqueTag, InsertTemplate, Data);
 % Ignore all other events
 handle_event(EventType, EventData, State, Data) ->
     ?SLOG(
@@ -522,6 +531,14 @@ stop_resource(#data{state = ResState, id = ResId} = Data) ->
 make_test_id() ->
     RandId = iolist_to_binary(emqx_utils:gen_id(16)),
     <<?TEST_ID_PREFIX, RandId/binary>>.
+
+handle_maybe_install_insert_template(From, UniqueTag, InsertTemplate, Data) ->
+    NewState = emqx_resource:call_maybe_install_insert_template(
+        Data#data.id, Data#data.mod, Data#data.state, UniqueTag, InsertTemplate
+    ),
+    UpdatedData = Data#data{state = NewState},
+    update_state(UpdatedData, Data),
+    {keep_state, UpdatedData, [{reply, From, ok}]}.
 
 handle_manually_health_check(From, Data) ->
     with_health_check(

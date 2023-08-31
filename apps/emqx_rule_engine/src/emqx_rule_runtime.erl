@@ -361,6 +361,27 @@ do_handle_action(RuleId, {bridge, BridgeType, BridgeName, ResId}, Selected, _Env
         Result ->
             Result
     end;
+do_handle_action(
+    RuleId,
+    {bridge_override_insert_template, Type, Name, ResId, InsertTemplate, UniqueTag},
+    Selected,
+    _Envs
+) ->
+    ?TRACE(
+        "BRIDGE",
+        "bridge_action_override_insert_template",
+        #{bridge_id => emqx_bridge_resource:bridge_id(Type, Name)}
+    ),
+    ReplyTo = {fun ?MODULE:inc_action_metrics/2, [RuleId], #{reply_dropped => true}},
+    ok = emqx_resource_manager:maybe_install_insert_template(ResId, UniqueTag, InsertTemplate),
+    case emqx_bridge:send_message(Type, Name, ResId, Selected, #{reply_to => ReplyTo}, UniqueTag) of
+        {error, Reason} when Reason == bridge_not_found; Reason == bridge_stopped ->
+            throw(out_of_service);
+        ?RESOURCE_ERROR_M(R, _) when ?IS_RES_DOWN(R) ->
+            throw(out_of_service);
+        Result ->
+            Result
+    end;
 do_handle_action(RuleId, #{mod := Mod, func := Func, args := Args}, Selected, Envs) ->
     %% the function can also throw 'out_of_service'
     Result = Mod:Func(Selected, Envs, Args),

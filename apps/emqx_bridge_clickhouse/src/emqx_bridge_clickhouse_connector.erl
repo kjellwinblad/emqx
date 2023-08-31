@@ -33,7 +33,8 @@
     on_stop/2,
     on_query/3,
     on_batch_query/3,
-    on_get_status/2
+    on_get_status/2,
+    maybe_install_insert_template/4
 ]).
 
 %% callbacks for ecpool
@@ -155,6 +156,7 @@ on_start(
         Templates = prepare_sql_templates(Config),
         State = #{
             pool_name => InstanceID,
+            tags_to_template_map => #{send_message => Templates},
             templates => Templates,
             connect_timeout => ConnectTimeout
         },
@@ -184,6 +186,24 @@ on_start(
                 }
             ),
             {error, CatchReason}
+    end.
+
+maybe_install_insert_template(_ResId, ResourceState, UniqueTag, InsertTemplate) ->
+    TagsToTemplateMap = maps:get(tags_to_template_map, ResourceState, #{}),
+    case maps:is_key(UniqueTag, TagsToTemplateMap) of
+        true ->
+            {ok, ResourceState};
+        false ->
+            Separator = maps:get(batch_value_separator, ResourceState, <<", ">>),
+            PreparedTemplate = prepare_sql_templates(#{
+                sql => InsertTemplate,
+                batch_value_separator => Separator
+            }),
+            UpdatedTagsToTemplateMap =
+                TagsToTemplateMap#{UniqueTag => PreparedTemplate},
+            UpdatedResourceState =
+                ResourceState#{tags_to_template_map => UpdatedTagsToTemplateMap},
+            {ok, UpdatedResourceState}
     end.
 
 %% Helper functions to prepare SQL tempaltes
@@ -357,15 +377,17 @@ on_query(
     }),
     %% Have we got a query or data to fit into an SQL template?
     SimplifiedRequestType = query_type(RequestType),
-    #{templates := Templates} = State,
-    SQL = get_sql(SimplifiedRequestType, Templates, DataOrSQL),
+    #{tags_to_template_map := TemplateMap} = State,
+    SQL = get_sql(SimplifiedRequestType, TemplateMap, DataOrSQL),
     ClickhouseResult = execute_sql_in_clickhouse_server(PoolName, SQL),
     transform_and_log_clickhouse_result(ClickhouseResult, ResourceID, SQL).
 
-get_sql(send_message, #{send_message_template := PreparedSQL}, Data) ->
-    emqx_placeholder:proc_tmpl(PreparedSQL, Data);
-get_sql(_, _, SQL) ->
-    SQL.
+get_sql(query, _, SQL) ->
+    SQL;
+get_sql(Tag, TempalteMap, Data) ->
+    PreparedSQLTemplateMap = maps:get(Tag, TempalteMap),
+    PreparedSQL = maps:get(send_message_template, PreparedSQLTemplateMap),
+    emqx_placeholder:proc_tmpl(PreparedSQL, Data).
 
 query_type(sql) ->
     query;
@@ -373,7 +395,9 @@ query_type(query) ->
     query;
 %% Data that goes to bridges use the prepared template
 query_type(send_message) ->
-    send_message.
+    send_message;
+query_type(Tag) ->
+    Tag.
 
 %% -------------------------------------------------------------------
 %% on_batch_query emqx_resouce callback and related functions
@@ -385,33 +409,17 @@ query_type(send_message) ->
 on_batch_query(
     ResourceID,
     BatchReq,
-    #{pool_name := PoolName, templates := Templates} = _State
+    #{pool_name := PoolName, tags_to_template_map := TemplateMap} = _State
 ) ->
-    %% Currently we only support batch requests with the send_message key
     {Keys, ObjectsToInsert} = lists:unzip(BatchReq),
-    ensure_keys_are_of_type_send_message(Keys),
     %% Create batch insert SQL statement
-    SQL = objects_to_sql(ObjectsToInsert, Templates),
+    Tag = hd(Keys),
+    Template = maps:get(Tag, TemplateMap),
+    SQL = objects_to_sql(ObjectsToInsert, Template),
     %% Do the actual query in the database
     ResultFromClickhouse = execute_sql_in_clickhouse_server(PoolName, SQL),
     %% Transform the result to a better format
     transform_and_log_clickhouse_result(ResultFromClickhouse, ResourceID, SQL).
-
-ensure_keys_are_of_type_send_message(Keys) ->
-    case lists:all(fun is_send_message_atom/1, Keys) of
-        true ->
-            ok;
-        false ->
-            erlang:error(
-                {unrecoverable_error,
-                    <<"Unexpected type for batch message (Expected send_message)">>}
-            )
-    end.
-
-is_send_message_atom(send_message) ->
-    true;
-is_send_message_atom(_) ->
-    false.
 
 objects_to_sql(
     [FirstObject | RemainingObjects] = _ObjectsToInsert,

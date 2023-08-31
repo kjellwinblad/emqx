@@ -51,7 +51,9 @@
 
 -export([
     send_message/2,
-    send_message/5
+    send_message/5,
+    send_message/6,
+    create_buffer_workers_for_tag/4
 ]).
 
 -export([config_key_path/0]).
@@ -220,18 +222,38 @@ send_to_matched_egress_bridges(Topic, Msg) ->
         MatchedBridgeIds
     ).
 
+create_buffer_workers_for_tag(
+    BridgeType,
+    BridgeName,
+    ResourceId,
+    UniqueTag
+) ->
+    case emqx:get_config([?ROOT_KEY, BridgeType, BridgeName], not_found) of
+        not_found ->
+            {error, bridge_not_found};
+        #{enable := true} = Config ->
+            CreationOpts = emqx_resource:fetch_creation_opts(Config),
+            emqx_resource_buffer_worker_sup:start_workers({ResourceId, UniqueTag}, CreationOpts),
+            ok;
+        #{enable := false} ->
+            {error, bridge_stopped}
+    end.
+
 send_message(BridgeId, Message) ->
     {BridgeType, BridgeName} = emqx_bridge_resource:parse_bridge_id(BridgeId),
     ResId = emqx_bridge_resource:resource_id(BridgeType, BridgeName),
     send_message(BridgeType, BridgeName, ResId, Message, #{}).
 
 send_message(BridgeType, BridgeName, ResId, Message, QueryOpts0) ->
+    send_message(BridgeType, BridgeName, ResId, Message, QueryOpts0, send_message).
+
+send_message(BridgeType, BridgeName, ResId, Message, QueryOpts0, MessageTag) ->
     case emqx:get_config([?ROOT_KEY, BridgeType, BridgeName], not_found) of
         not_found ->
             {error, bridge_not_found};
         #{enable := true} = Config ->
             QueryOpts = maps:merge(query_opts(Config), QueryOpts0),
-            emqx_resource:query(ResId, {send_message, Message}, QueryOpts);
+            emqx_resource:query(ResId, {MessageTag, Message}, QueryOpts);
         #{enable := false} ->
             {error, bridge_stopped}
     end.
