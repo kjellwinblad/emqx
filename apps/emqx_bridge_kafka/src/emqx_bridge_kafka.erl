@@ -165,7 +165,10 @@ fields(kafka_consumer) ->
     fields("config") ++ fields(consumer_opts);
 fields("config") ->
     [
-        {enable, mk(boolean(), #{desc => ?DESC("config_enable"), default => true})},
+        {enable, mk(boolean(), #{desc => ?DESC("config_enable"), default => true})}
+    ] ++ fields(connector_config);
+fields(connector_config) ->
+    [
         {bootstrap_hosts,
             mk(
                 binary(),
@@ -478,6 +481,8 @@ desc("put_" ++ Type) when Type =:= "consumer"; Type =:= "producer" ->
     ["Configuration for Kafka using `PUT` method."];
 desc("post_" ++ Type) when Type =:= "consumer"; Type =:= "producer" ->
     ["Configuration for Kafka using `POST` method."];
+desc(connector_config) ->
+    <<"Kafka Connector Config">>;
 desc(Name) ->
     lists:member(Name, struct_names()) orelse throw({missing_desc, Name}),
     ?DESC(Name).
