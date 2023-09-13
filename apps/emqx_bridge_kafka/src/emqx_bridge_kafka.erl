@@ -160,13 +160,18 @@ fields("config_producer") ->
 fields("config_consumer") ->
     fields(kafka_consumer);
 fields(kafka_producer) ->
-    fields("config") ++ fields(producer_opts);
+    fields("connector_config_producer") ++ fields(producer_opts);
 fields(kafka_consumer) ->
-    fields("config") ++ fields(consumer_opts);
-fields("config") ->
+    fields("connector_config_consumer") ++ fields(consumer_opts);
+fields("connector_config_consumer") ->
     [
         {enable, mk(boolean(), #{desc => ?DESC("config_enable"), default => true})}
     ] ++ fields(connector_config);
+fields("connector_config_producer") ->
+    [
+        {enable, mk(boolean(), #{desc => ?DESC("config_enable"), default => true})},
+        {connector, mk(binary(), #{desc => ?DESC("config_connector"), required => true})}
+    ];
 fields(connector_config) ->
     [
         {bootstrap_hosts,
