@@ -1,7 +1,7 @@
 %%--------------------------------------------------------------------
 %% Copyright (c) 2022-2023 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%--------------------------------------------------------------------
--module(emqx_connector_enterprise).
+-module(emqx_action_enterprise).
 
 -if(?EMQX_RELEASE_EDITION == ee).
 
@@ -12,16 +12,16 @@
     fields/1
 ]).
 
-fields(connectors) ->
+fields(actions) ->
     kafka_structs().
 
 kafka_structs() ->
     [
         {kafka,
             mk(
-                hoconsc:map(name, ref(emqx_bridge_kafka, "config")),
+                hoconsc:map(name, ref(emqx_bridge_kafka, kafka_producer_action)),
                 #{
-                    desc => <<"Kafka Connector Config">>,
+                    desc => <<"Kafka Producer Action Config">>,
                     required => false
                 }
             )}

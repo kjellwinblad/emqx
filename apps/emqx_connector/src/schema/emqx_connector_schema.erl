@@ -21,7 +21,7 @@
 
 -import(hoconsc, [mk/2, ref/2]).
 
--export([transform_connector_less_bridges/1]).
+-export([transform_old_style_bridges_to_connector_and_actions/1]).
 
 -export([roots/0, fields/1, desc/1, namespace/0, tags/0]).
 
@@ -67,7 +67,7 @@ bridge_configs_to_transform(BridgeType, [{BridgeName, BridgeConf} | Rest], Conne
             bridge_configs_to_transform(BridgeType, Rest, ConnectorFields)
     end.
 
-split_bridge_to_connector_and_bridge(
+split_bridge_to_connector_and_action(
     {ConnectorsMap, {BridgeType, BridgeName, BridgeConf, ConnectorFields}}
 ) ->
     %% Get connector fields from bridge config
@@ -88,38 +88,46 @@ split_bridge_to_connector_and_bridge(
         #{},
         ConnectorFields
     ),
-    %% Remove connector fields from bridge config
-    BridgeMap0 = lists:foldl(
-        fun({ConnectorFieldName, _Spec}, ToTransformSoFar) ->
-            case maps:is_key(to_bin(ConnectorFieldName), BridgeConf) of
-                true ->
-                    maps:remove(to_bin(ConnectorFieldName), ToTransformSoFar);
-                false ->
-                    ToTransformSoFar
-            end
+    %% Remove connector fields from bridge config to create Action
+    ActionMap0 = lists:foldl(
+        fun
+            ({enable, _Spec}, ToTransformSoFar) ->
+                %% Enable filed is used in both
+                ToTransformSoFar;
+            ({ConnectorFieldName, _Spec}, ToTransformSoFar) ->
+                case maps:is_key(to_bin(ConnectorFieldName), BridgeConf) of
+                    true ->
+                        maps:remove(to_bin(ConnectorFieldName), ToTransformSoFar);
+                    false ->
+                        ToTransformSoFar
+                end
         end,
         BridgeConf,
         ConnectorFields
     ),
-    %% Generate an connector name with BridgeName as prefix and a random suffix until no conflict in ConnectorsMap
-    ConnectorName = generate_connector_name(ConnectorsMap, BridgeName),
-    %% Add connector field to bridge map
-    BridgeMap = maps:put(<<"connector">>, ConnectorName, BridgeMap0),
-    {BridgeType, BridgeName, BridgeMap, ConnectorName, ConnectorMap}.
+    %% Generate a connector name
+    ConnectorName = generate_connector_name(ConnectorsMap, BridgeName, 0),
+    %% Add connector field to action map
+    ActionMap = maps:put(<<"connector">>, ConnectorName, ActionMap0),
+    {BridgeType, BridgeName, ActionMap, ConnectorName, ConnectorMap}.
 
-generate_connector_name(ConnectorsMap, BridgeName) ->
-    ConnectorNameList = lists:flatten(
-        io_lib:format("~s_~p", [BridgeName, rand:uniform(1000000000)])
-    ),
-    ConnectorName = list_to_binary(ConnectorNameList),
+generate_connector_name(ConnectorsMap, BridgeName, Attempt) ->
+    ConnectorNameList =
+        case Attempt of
+            0 ->
+                io_lib:format("connector_~s", [BridgeName]);
+            _ ->
+                io_lib:format("connector_~s_~p", [BridgeName, Attempt + 1])
+        end,
+    ConnectorName = iolist_to_binary(ConnectorNameList),
     case maps:is_key(ConnectorName, ConnectorsMap) of
         true ->
-            generate_connector_name(ConnectorsMap, BridgeName);
+            generate_connector_name(ConnectorsMap, BridgeName, Attempt + 1);
         false ->
             ConnectorName
     end.
 
-transform_connector_less_bridges_of_type(
+transform_old_style_bridges_to_connector_and_actions_of_type(
     {ConnectorType, #{type := {map, name, {ref, ConnectorConfSchemaMod, ConnectorConfSchemaName}}}},
     RawConfig
 ) ->
@@ -145,37 +153,40 @@ transform_connector_less_bridges_of_type(
         lists:duplicate(length(BridgeConfigsToTransform), ConnectorsConfMap),
         BridgeConfigsToTransform
     ),
-    BridgeConnectorModifications = lists:map(
-        fun split_bridge_to_connector_and_bridge/1,
+    ActionConnectorTuples = lists:map(
+        fun split_bridge_to_connector_and_action/1,
         BridgeConfigsToTransformWithConnectorConf
     ),
-    %% Apply modifications to RawConfig
+    %% Add connectors and actions and remove bridges
     lists:foldl(
-        fun({BridgeType, BridgeName, BridgeMap, ConnectorName, ConnectorMap}, RawConfigSoFar) ->
+        fun({BridgeType, BridgeName, ActionMap, ConnectorName, ConnectorMap}, RawConfigSoFar) ->
+            %% Add connector
             RawConfigSoFar1 = emqx_utils_maps:deep_put(
                 [<<"connectors">>, to_bin(ConnectorType), ConnectorName],
                 RawConfigSoFar,
                 ConnectorMap
             ),
+            %% Remove bridge
             RawConfigSoFar2 = emqx_utils_maps:deep_remove(
                 [<<"bridges">>, to_bin(BridgeType), BridgeName],
                 RawConfigSoFar1
             ),
+            %% Add action
             RawConfigSoFar3 = emqx_utils_maps:deep_put(
-                [<<"bridges">>, to_bin(BridgeType), BridgeName],
+                [<<"actions">>, to_bin(BridgeType), BridgeName],
                 RawConfigSoFar2,
-                BridgeMap
+                ActionMap
             ),
             RawConfigSoFar3
         end,
         RawConfig,
-        BridgeConnectorModifications
+        ActionConnectorTuples
     ).
 
-transform_connector_less_bridges(RawConfig) ->
+transform_old_style_bridges_to_connector_and_actions(RawConfig) ->
     ConnectorFields = fields(connectors),
     NewRawConf = lists:foldl(
-        fun transform_connector_less_bridges_of_type/2,
+        fun transform_old_style_bridges_to_connector_and_actions_of_type/2,
         RawConfig,
         ConnectorFields
     ),

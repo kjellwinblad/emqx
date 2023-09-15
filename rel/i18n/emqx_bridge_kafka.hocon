@@ -429,4 +429,11 @@ sync_query_timeout.desc:
 sync_query_timeout.label:
 """Synchronous Query Timeout"""
 
+
+kafka_producer_action.desc:
+"""Kafka Producer Action"""
+
+kafka_producer_action.label:
+"""Kafka Producer Action"""
+
 }

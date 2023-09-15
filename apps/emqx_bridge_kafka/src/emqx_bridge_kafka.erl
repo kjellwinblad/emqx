@@ -160,20 +160,20 @@ fields("config_producer") ->
 fields("config_consumer") ->
     fields(kafka_consumer);
 fields(kafka_producer) ->
-    fields("connector_config_producer") ++ fields(producer_opts);
-fields(kafka_consumer) ->
-    fields("connector_config_consumer") ++ fields(consumer_opts);
-fields("connector_config_consumer") ->
-    [
-        {enable, mk(boolean(), #{desc => ?DESC("config_enable"), default => true})}
-    ] ++ fields(connector_config);
-fields("connector_config_producer") ->
+    fields("config") ++ fields(producer_opts);
+fields(kafka_producer_action) ->
     [
         {enable, mk(boolean(), #{desc => ?DESC("config_enable"), default => true})},
-        {connector, mk(binary(), #{desc => ?DESC("config_connector"), required => true})}
-    ];
-fields(connector_config) ->
+        {connector,
+            mk(binary(), #{
+                desc => ?DESC(emqx_connector_schema, "connector_field"), required => true
+            })}
+    ] ++ fields(producer_opts);
+fields(kafka_consumer) ->
+    fields("config") ++ fields(consumer_opts);
+fields("config") ->
     [
+        {enable, mk(boolean(), #{desc => ?DESC("config_enable"), default => true})},
         {bootstrap_hosts,
             mk(
                 binary(),
@@ -486,8 +486,8 @@ desc("put_" ++ Type) when Type =:= "consumer"; Type =:= "producer" ->
     ["Configuration for Kafka using `PUT` method."];
 desc("post_" ++ Type) when Type =:= "consumer"; Type =:= "producer" ->
     ["Configuration for Kafka using `POST` method."];
-desc(connector_config) ->
-    <<"Kafka Connector Config">>;
+desc(kafka_producer_action) ->
+    ?DESC("kafka_producer_action");
 desc(Name) ->
     lists:member(Name, struct_names()) orelse throw({missing_desc, Name}),
     ?DESC(Name).

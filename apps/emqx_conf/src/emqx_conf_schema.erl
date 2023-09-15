@@ -47,8 +47,9 @@
 %% The list can not be made a dynamic read at run-time as it is used
 %% by nodetool to generate app.<time>.config before EMQX is started
 -define(MERGED_CONFIGS, [
-    emqx_connector_schema,
     emqx_bridge_schema,
+    emqx_connector_schema,
+    emqx_action_schema,
     emqx_retainer_schema,
     emqx_authn_schema,
     emqx_authz_schema,
