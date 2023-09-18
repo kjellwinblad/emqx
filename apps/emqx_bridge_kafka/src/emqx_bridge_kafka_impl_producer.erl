@@ -40,6 +40,56 @@ query_mode(_) ->
 
 callback_mode() -> async_if_possible.
 
+%% @doc Config schema is defined in emqx_connector_kafka.
+on_start(<<"connector:", _/binary>> = InstId, Config) ->
+    #{
+        authentication := Auth,
+        bootstrap_hosts := Hosts0,
+        connector_name := ConnectorName,
+        connect_timeout := ConnTimeout,
+        metadata_request_timeout := MetaReqTimeout,
+        min_metadata_refresh_interval := MinMetaRefreshInterval,
+        socket_opts := SocketOpts,
+        ssl := SSL
+    } = Config,
+    BridgeType = ?BRIDGE_TYPE,
+    ResourceId = emqx_connector_resource:resource_id(BridgeType, ConnectorName),
+    ok = emqx_resource:allocate_resource(InstId, ?kafka_resource_id, ResourceId),
+    _ = maybe_install_wolff_telemetry_handlers(ResourceId),
+    Hosts = emqx_bridge_kafka_impl:hosts(Hosts0),
+    ClientId = emqx_bridge_kafka_impl:make_client_id(InstId),
+    ok = emqx_resource:allocate_resource(InstId, ?kafka_client_id, ClientId),
+    ClientConfig = #{
+        min_metadata_refresh_interval => MinMetaRefreshInterval,
+        connect_timeout => ConnTimeout,
+        client_id => ClientId,
+        request_timeout => MetaReqTimeout,
+        extra_sock_opts => emqx_bridge_kafka_impl:socket_opts(SocketOpts),
+        sasl => emqx_bridge_kafka_impl:sasl(Auth),
+        ssl => ssl(SSL)
+    },
+    case wolff:ensure_supervised_client(ClientId, Hosts, ClientConfig) of
+        {ok, _} ->
+            ?SLOG(info, #{
+                msg => "kafka_client_started",
+                instance_id => InstId,
+                kafka_hosts => Hosts
+            });
+        {error, Reason} ->
+            ?SLOG(error, #{
+                msg => "failed_to_start_kafka_client",
+                instance_id => InstId,
+                kafka_hosts => Hosts,
+                reason => Reason
+            }),
+            throw(failed_to_start_kafka_client)
+    end,
+    %% Check if this is a dry run
+    {ok, #{
+        client_id => ClientId,
+        resource_id => ResourceId,
+        hosts => Hosts
+    }};
 %% @doc Config schema is defined in emqx_bridge_kafka.
 on_start(InstId, Config) ->
     #{
@@ -401,6 +451,19 @@ on_kafka_ack(_Partition, buffer_overflow_discarded, _Callback) ->
 %% Note: since wolff client has its own replayq that is not managed by
 %% `emqx_resource_buffer_worker', we must avoid returning `disconnected' here.  Otherwise,
 %% `emqx_resource_manager' will kill the wolff producers and messages might be lost.
+on_get_status(
+    <<"connector:", _/binary>> = _InstId,
+    #{client_id := ClientId} = State
+) ->
+    case wolff_client_sup:find_client(ClientId) of
+        {ok, Pid} ->
+            case wolff_client:check_connectivity(Pid) of
+                ok -> connected;
+                {error, Error} -> {connecting, State, Error}
+            end;
+        {error, _Reason} ->
+            connecting
+    end;
 on_get_status(_InstId, #{client_id := ClientId} = State) ->
     case wolff_client_sup:find_client(ClientId) of
         {ok, Pid} ->

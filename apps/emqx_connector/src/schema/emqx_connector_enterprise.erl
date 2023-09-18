@@ -3,6 +3,8 @@
 %%--------------------------------------------------------------------
 -module(emqx_connector_enterprise).
 
+-export([resource_type/1, connector_impl_module/1]).
+
 -if(?EMQX_RELEASE_EDITION == ee).
 
 -include_lib("hocon/include/hoconsc.hrl").
@@ -26,6 +28,15 @@ kafka_structs() ->
                 }
             )}
     ].
+
+resource_type(Type) when is_binary(Type) -> resource_type(binary_to_atom(Type, utf8));
+resource_type(kafka) -> emqx_bridge_kafka_impl_producer.
+
+%% For connectors that need to override connector configurations.
+connector_impl_module(ConnectorType) when is_binary(ConnectorType) ->
+    connector_impl_module(binary_to_atom(ConnectorType, utf8));
+connector_impl_module(_ConnectorType) ->
+    undefined.
 
 -else.
 
