@@ -12,7 +12,7 @@
     fields/1
 ]).
 
-fields(actions) ->
+fields(bridges_v2) ->
     kafka_structs().
 
 kafka_structs() ->
@@ -21,7 +21,7 @@ kafka_structs() ->
             mk(
                 hoconsc:map(name, ref(emqx_bridge_kafka, kafka_producer_action)),
                 #{
-                    desc => <<"Kafka Producer Action Config">>,
+                    desc => <<"Kafka Producer Bridge V2 Config">>,
                     required => false
                 }
             )}

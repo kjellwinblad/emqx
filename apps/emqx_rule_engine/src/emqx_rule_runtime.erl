@@ -361,6 +361,39 @@ do_handle_action(RuleId, {bridge, BridgeType, BridgeName, ResId}, Selected, _Env
         Result ->
             Result
     end;
+do_handle_action(
+    RuleId,
+    {bridge_v2, BridgeType, BridgeName},
+    Selected,
+    _Envs
+) ->
+    ConnectorResourceId = emqx_bridge_v2:connector_resource_id(BridgeType, BridgeName),
+    BridgeV2Id = emqx_bridge_v2:id(BridgeType, BridgeName),
+    ?TRACE(
+        "BRIDGE",
+        "bridge_action",
+        #{bridge_id => BridgeV2Id}
+    ),
+    ReplyTo = {fun ?MODULE:inc_action_metrics/2, [RuleId], #{reply_dropped => true}},
+
+    ok = emqx_resource_manager:maybe_install_bridge_v2(ConnectorResourceId, BridgeV2Id),
+    case
+        emqx_bridge_v2:send_message(
+            BridgeType,
+            BridgeName,
+            ConnectorResourceId,
+            Selected,
+            #{reply_to => ReplyTo},
+            BridgeV2Id
+        )
+    of
+        {error, Reason} when Reason == bridge_not_found; Reason == bridge_stopped ->
+            throw(out_of_service);
+        ?RESOURCE_ERROR_M(R, _) when ?IS_RES_DOWN(R) ->
+            throw(out_of_service);
+        Result ->
+            Result
+    end;
 do_handle_action(RuleId, #{mod := Mod, func := Func, args := Args}, Selected, Envs) ->
     %% the function can also throw 'out_of_service'
     Result = Mod:Func(Selected, Envs, Args),

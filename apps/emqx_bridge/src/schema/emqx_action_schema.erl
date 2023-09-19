@@ -31,7 +31,7 @@ enterprise_fields_actions() ->
     _ = emqx_action_enterprise:module_info(),
     case erlang:function_exported(emqx_action_enterprise, fields, 1) of
         true ->
-            emqx_action_enterprise:fields(actions);
+            emqx_action_enterprise:fields(bridges_v2);
         false ->
             []
     end.
@@ -46,14 +46,14 @@ enterprise_fields_actions() -> [].
 %% HOCON Schema Callbacks
 %%======================================================================================
 
-namespace() -> "action".
+namespace() -> "bridge_v2".
 
 tags() ->
-    [<<"Action">>].
+    [<<"Bridge V2">>].
 
-roots() -> [{actions, ?HOCON(?R_REF(actions), #{importance => ?IMPORTANCE_LOW})}].
+roots() -> [{bridges_v2, ?HOCON(?R_REF(bridges_v2), #{importance => ?IMPORTANCE_LOW})}].
 
-fields(actions) ->
+fields(bridges_v2) ->
     [] ++ enterprise_fields_actions().
 
 desc(_) ->

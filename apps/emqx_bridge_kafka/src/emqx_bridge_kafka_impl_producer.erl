@@ -14,7 +14,8 @@
     on_stop/2,
     on_query/3,
     on_query_async/4,
-    on_get_status/2
+    on_get_status/2,
+    maybe_install_bridge_v2/4
 ]).
 
 -export([
@@ -88,7 +89,8 @@ on_start(<<"connector:", _/binary>> = InstId, Config) ->
     {ok, #{
         client_id => ClientId,
         resource_id => ResourceId,
-        hosts => Hosts
+        hosts => Hosts,
+        installed_bridge_v2s => #{}
     }};
 %% @doc Config schema is defined in emqx_bridge_kafka.
 on_start(InstId, Config) ->
@@ -169,6 +171,97 @@ on_start(InstId, Config) ->
                 resource_id => ResourceId,
                 sync_query_timeout => SyncQueryTimeout,
                 hosts => Hosts,
+                kafka_config => KafkaConfig,
+                headers_tokens => KafkaHeadersTokens,
+                ext_headers_tokens => KafkaExtHeadersTokens,
+                headers_val_encode_mode => KafkaHeadersValEncodeMode
+            }};
+        {error, Reason2} ->
+            ?SLOG(error, #{
+                msg => "failed_to_start_kafka_producer",
+                instance_id => InstId,
+                kafka_hosts => Hosts,
+                kafka_topic => KafkaTopic,
+                reason => Reason2
+            }),
+            %% Need to stop the already running client; otherwise, the
+            %% next `on_start' call will try to ensure the client
+            %% exists and it will be already present and using the old
+            %% config.  This is specially bad if the original crash
+            %% was due to misconfiguration and we are trying to fix
+            %% it...
+            _ = with_log_at_error(
+                fun() -> wolff:stop_and_delete_supervised_client(ClientId) end,
+                #{
+                    msg => "failed_to_delete_kafka_client",
+                    client_id => ClientId
+                }
+            ),
+
+            throw(
+                "Failed to start Kafka client. Please check the logs for errors and check"
+                " the connection parameters."
+            )
+    end.
+
+maybe_install_bridge_v2(
+    InstId,
+    #{
+        client_id := ClientId,
+        installed_bridge_v2s := InstalledBridgeV2s
+    } = OldState,
+    BridgeV2ResourceId,
+    BridgeV2Config
+) ->
+    x:show(yyyyyyyyyyyyyyyyyyyyyyyyyyyyy_got_called, Bridge2Config),
+    x:show(
+        yyyyyyyyyyyyyyyyyyyyyyyyyyyyy_got_called, {ResourceId, ResourceState, Bridge2ResourceId}
+    ),
+    {ok, BridgeV2State} = create_producers_for_bridge_v2(
+        InstId, BridgeV2ResourceId, ClientId, BridgeV2Config
+    ),
+    NewInstalledBridgeV2s = maps:put(BridgeV2ResourceId, BridgeV2State, InstalledBridgeV2s),
+    %% Update state
+    NewState = OldState#{installed_bridge_v2s => NewInstalledBridgeV2s},
+    x:show(new_state, NewState),
+    NewState.
+
+create_producers_for_bridge_v2(
+    InstId,
+    Bridge2ResourceId,
+    ClientId,
+    KafkaConfig = #{
+        message := MessageTemplate,
+        topic := KafkaTopic,
+        sync_query_timeout := SyncQueryTimeout
+    }
+) ->
+    KafkaHeadersTokens = preproc_kafka_headers(maps:get(kafka_headers, KafkaConfig, undefined)),
+    KafkaExtHeadersTokens = preproc_ext_headers(maps:get(kafka_ext_headers, KafkaConfig, [])),
+    KafkaHeadersValEncodeMode = maps:get(kafka_header_value_encode_mode, KafkaConfig, none),
+    BridgeType = ?BRIDGE_TYPE,
+    ResourceId = emqx_bridge_resource:resource_id(BridgeType, BridgeName),
+    ok = emqx_resource:allocate_resource(InstId, ?kafka_resource_id, ResourceId),
+    _ = maybe_install_wolff_telemetry_handlers(ResourceId),
+    TestIdStart = string:find(InstId, ?TEST_ID_PREFIX),
+    IsDryRun =
+        case TestIdStart of
+            nomatch ->
+                false;
+            _ ->
+                string:equal(TestIdStart, InstId)
+        end,
+    WolffProducerConfig = producers_config(BridgeName, ClientId, KafkaConfig, IsDryRun),
+    case wolff:ensure_supervised_producers(ClientId, KafkaTopic, WolffProducerConfig) of
+        {ok, Producers} ->
+            ok = emqx_resource:allocate_resource(InstId, ?kafka_producers, Producers),
+            {ok, #{
+                message_template => compile_message_template(MessageTemplate),
+                client_id => ClientId,
+                kafka_topic => KafkaTopic,
+                producers => Producers,
+                resource_id => ResourceId,
+                sync_query_timeout => SyncQueryTimeout,
                 kafka_config => KafkaConfig,
                 headers_tokens => KafkaHeadersTokens,
                 ext_headers_tokens => KafkaExtHeadersTokens,
