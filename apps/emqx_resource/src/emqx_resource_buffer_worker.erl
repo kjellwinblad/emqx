@@ -1037,7 +1037,7 @@ handle_async_worker_down(Data0, Pid) ->
 -spec call_query(force_sync | async_if_possible, _, _, _, _, _) -> _.
 call_query(QM, Id, Index, Ref, Query, QueryOpts) ->
     ?tp(call_query_enter, #{id => Id, query => Query, query_mode => QM}),
-    case emqx_resource_manager:lookup_cached(Id) of
+    case emqx_resource_manager:lookup_cached(extract_connector_id(Id)) of
         {ok, _Group, #{status := stopped}} ->
             ?RESOURCE_ERROR(stopped, "resource stopped or disabled");
         {ok, _Group, #{status := connecting, error := unhealthy_target}} ->
@@ -1047,6 +1047,11 @@ call_query(QM, Id, Index, Ref, Query, QueryOpts) ->
         {error, not_found} ->
             ?RESOURCE_ERROR(not_found, "resource not found")
     end.
+
+extract_connector_id(<<"bridge_v2:", _/binary>> = Id) ->
+    emqx_bridge_v2:extract_connector_id_from_bridge_v2_id(Id);
+extract_connector_id(Id) ->
+    Id.
 
 do_call_query(QM, Id, Index, Ref, Query, #{is_buffer_supported := true} = QueryOpts, Resource) ->
     %% The connector supports buffer, send even in disconnected state
@@ -1094,7 +1099,9 @@ apply_query_fun(
 ) ->
     ?tp(call_query, #{id => Id, mod => Mod, query => _Query, res_st => ResSt, call_mode => sync}),
     maybe_reply_to(
-        ?APPLY_RESOURCE(call_query, Mod:on_query(Id, Request, ResSt), Request),
+        ?APPLY_RESOURCE(
+            call_query, Mod:on_query(extract_connector_id(Id), Request, ResSt), Request
+        ),
         QueryOpts
     );
 apply_query_fun(async, Mod, Id, Index, Ref, ?QUERY(_, Request, _, _) = Query, ResSt, QueryOpts) ->
@@ -1119,7 +1126,9 @@ apply_query_fun(async, Mod, Id, Index, Ref, ?QUERY(_, Request, _, _) = Query, Re
             AsyncWorkerMRef = undefined,
             InflightItem = ?INFLIGHT_ITEM(Ref, Query, IsRetriable, AsyncWorkerMRef),
             ok = inflight_append(InflightTID, InflightItem),
-            Result = Mod:on_query_async(Id, Request, {ReplyFun, [ReplyContext]}, ResSt),
+            Result = Mod:on_query_async(
+                extract_connector_id(Id), Request, {ReplyFun, [ReplyContext]}, ResSt
+            ),
             {async_return, Result}
         end,
         Request
@@ -1132,7 +1141,9 @@ apply_query_fun(
     }),
     Requests = lists:map(fun(?QUERY(_ReplyTo, Request, _, _ExpireAt)) -> Request end, Batch),
     maybe_reply_to(
-        ?APPLY_RESOURCE(call_batch_query, Mod:on_batch_query(Id, Requests, ResSt), Batch),
+        ?APPLY_RESOURCE(
+            call_batch_query, Mod:on_batch_query(extract_connector_id(Id), Requests, ResSt), Batch
+        ),
         QueryOpts
     );
 apply_query_fun(async, Mod, Id, Index, Ref, [?QUERY(_, _, _, _) | _] = Batch, ResSt, QueryOpts) ->
@@ -1160,7 +1171,9 @@ apply_query_fun(async, Mod, Id, Index, Ref, [?QUERY(_, _, _, _) | _] = Batch, Re
             AsyncWorkerMRef = undefined,
             InflightItem = ?INFLIGHT_ITEM(Ref, Batch, IsRetriable, AsyncWorkerMRef),
             ok = inflight_append(InflightTID, InflightItem),
-            Result = Mod:on_batch_query_async(Id, Requests, {ReplyFun, [ReplyContext]}, ResSt),
+            Result = Mod:on_batch_query_async(
+                extract_connector_id(Id), Requests, {ReplyFun, [ReplyContext]}, ResSt
+            ),
             {async_return, Result}
         end,
         Batch

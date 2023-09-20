@@ -75,7 +75,6 @@ split_bridge_to_connector_and_action(
     %% Get connector fields from bridge config
     ConnectorMap = lists:foldl(
         fun({ConnectorFieldName, _Spec}, ToTransformSoFar) ->
-            x:show(check_this, {ConnectorFieldName, BridgeConf}),
             case maps:is_key(to_bin(ConnectorFieldName), BridgeConf) of
                 true ->
                     NewToTransform = maps:put(
@@ -193,7 +192,6 @@ transform_old_style_bridges_to_connector_and_actions(RawConfig) ->
         RawConfig,
         ConnectorFields
     ),
-    x:show(xxxxxxxxxxxxxxxxxxxxx, NewRawConf),
     NewRawConf.
 
 %%======================================================================================

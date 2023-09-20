@@ -208,42 +208,50 @@ maybe_install_bridge_v2(
     InstId,
     #{
         client_id := ClientId,
+        hosts := Hosts,
         installed_bridge_v2s := InstalledBridgeV2s
     } = OldState,
-    BridgeV2ResourceId,
+    BridgeV2Id,
     BridgeV2Config
 ) ->
-    x:show(yyyyyyyyyyyyyyyyyyyyyyyyyyyyy_got_called, Bridge2Config),
-    x:show(
-        yyyyyyyyyyyyyyyyyyyyyyyyyyyyy_got_called, {ResourceId, ResourceState, Bridge2ResourceId}
-    ),
-    {ok, BridgeV2State} = create_producers_for_bridge_v2(
-        InstId, BridgeV2ResourceId, ClientId, BridgeV2Config
-    ),
-    NewInstalledBridgeV2s = maps:put(BridgeV2ResourceId, BridgeV2State, InstalledBridgeV2s),
-    %% Update state
-    NewState = OldState#{installed_bridge_v2s => NewInstalledBridgeV2s},
-    x:show(new_state, NewState),
-    NewState.
+    case maps:is_key(BridgeV2Id, InstalledBridgeV2s) of
+        true ->
+            %% Already installed
+            {ok, OldState};
+        false ->
+            %% Install
+            %% The following will throw an exception if the bridge producers fails to start
+            {ok, BridgeV2State} = create_producers_for_bridge_v2(
+                InstId, BridgeV2Id, ClientId, Hosts, BridgeV2Config
+            ),
+            NewInstalledBridgeV2s = maps:put(BridgeV2Id, BridgeV2State, InstalledBridgeV2s),
+            %% Update state
+            NewState = OldState#{installed_bridge_v2s => NewInstalledBridgeV2s},
+            {ok, NewState}
+    end.
+
+% [<<"connector:kafka:connector_kafka_producer_bridge">>,<<"kafka:kafka_producer_bridge">>,<<"connector:kafka:connector_kafka_producer_bridge:emqx@127.0.0.1">>,[{"127.0.0.1",9092}],#{connector => <<"connector_kafka_producer_bridge">>,enable => true,kafka => #{buffer => #{memory_overload_protection => false,mode => memory,per_partition_limit => 2147483648,segment_bytes => 104857600},compression => no_compression,kafka_header_value_encode_mode => none,max_batch_bytes => 917504,max_inflight => 10,message => #{key => "${.clientid}",timestamp => "${.timestamp}",value => "${.}"},partition_count_refresh_interval => 60,partition_strategy => random,query_mode => async,required_acks => all_isr,sync_query_timeout => 5000,topic => "testtopic-in"},local_topic => <<"kafka_t/#">>,resource_opts => #{health_check_interval => 15000}}]
 
 create_producers_for_bridge_v2(
     InstId,
-    Bridge2ResourceId,
+    BridgeV2Id,
     ClientId,
-    KafkaConfig = #{
-        message := MessageTemplate,
-        topic := KafkaTopic,
-        sync_query_timeout := SyncQueryTimeout
+    Hosts,
+    #{
+        kafka := #{
+            message := MessageTemplate,
+            topic := KafkaTopic,
+            sync_query_timeout := SyncQueryTimeout
+        } = KafkaConfig
     }
 ) ->
     KafkaHeadersTokens = preproc_kafka_headers(maps:get(kafka_headers, KafkaConfig, undefined)),
     KafkaExtHeadersTokens = preproc_ext_headers(maps:get(kafka_ext_headers, KafkaConfig, [])),
     KafkaHeadersValEncodeMode = maps:get(kafka_header_value_encode_mode, KafkaConfig, none),
-    BridgeType = ?BRIDGE_TYPE,
-    ResourceId = emqx_bridge_resource:resource_id(BridgeType, BridgeName),
-    ok = emqx_resource:allocate_resource(InstId, ?kafka_resource_id, ResourceId),
-    _ = maybe_install_wolff_telemetry_handlers(ResourceId),
-    TestIdStart = string:find(InstId, ?TEST_ID_PREFIX),
+    {_BridgeType, BridgeName} = emqx_bridge_v2:parse_id(BridgeV2Id),
+    ok = emqx_resource:allocate_resource(InstId, ?kafka_resource_id, BridgeV2Id),
+    _ = maybe_install_wolff_telemetry_handlers(BridgeV2Id),
+    TestIdStart = string:find(BridgeV2Id, ?TEST_ID_PREFIX),
     IsDryRun =
         case TestIdStart of
             nomatch ->
@@ -260,7 +268,8 @@ create_producers_for_bridge_v2(
                 client_id => ClientId,
                 kafka_topic => KafkaTopic,
                 producers => Producers,
-                resource_id => ResourceId,
+                resource_id => BridgeV2Id,
+                connector_resource_id => InstId,
                 sync_query_timeout => SyncQueryTimeout,
                 kafka_config => KafkaConfig,
                 headers_tokens => KafkaHeadersTokens,
@@ -410,16 +419,17 @@ on_query(
 %% or the direct mapping from an MQTT message.
 on_query_async(
     InstId,
-    {send_message, Message},
+    {MessageTag, Message},
     AsyncReplyFn,
+    #{installed_bridge_v2s := BridgeV2Configs} = _ConnectorState
+) ->
     #{
         message_template := Template,
         producers := Producers,
         headers_tokens := KafkaHeadersTokens,
         ext_headers_tokens := KafkaExtHeadersTokens,
         headers_val_encode_mode := KafkaHeadersValEncodeMode
-    }
-) ->
+    } = maps:get(MessageTag, BridgeV2Configs),
     KafkaHeaders = #{
         headers_tokens => KafkaHeadersTokens,
         ext_headers_tokens => KafkaExtHeadersTokens,

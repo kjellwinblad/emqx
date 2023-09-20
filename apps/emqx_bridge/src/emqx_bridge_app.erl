@@ -33,6 +33,7 @@ start(_StartType, _StartArgs) ->
     {ok, Sup} = emqx_bridge_sup:start_link(),
     ok = ensure_enterprise_schema_loaded(),
     ok = emqx_bridge:load(),
+    ok = emqx_bridge_v2:load(),
     ok = emqx_bridge:load_hook(),
     ok = emqx_config_handler:add_handler(?LEAF_NODE_HDLR_PATH, ?MODULE),
     ok = emqx_config_handler:add_handler(?TOP_LELVE_HDLR_PATH, emqx_bridge),

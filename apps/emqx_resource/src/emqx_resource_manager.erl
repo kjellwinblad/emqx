@@ -124,27 +124,8 @@ create_and_return_data(ResId, Group, ResourceType, Config, Opts) ->
 create(ResId, Group, ResourceType, Config, Opts) ->
     % The state machine will make the actual call to the callback/resource module after init
     ok = emqx_resource_manager_sup:ensure_child(ResId, Group, ResourceType, Config, Opts),
-    ok = emqx_metrics_worker:create_metrics(
-        ?RES_METRICS,
-        ResId,
-        [
-            'matched',
-            'retried',
-            'retried.success',
-            'retried.failed',
-            'success',
-            'late_reply',
-            'failed',
-            'dropped',
-            'dropped.expired',
-            'dropped.queue_full',
-            'dropped.resource_not_found',
-            'dropped.resource_stopped',
-            'dropped.other',
-            'received'
-        ],
-        [matched]
-    ),
+    % Create metrics for the resource
+    ok = emqx_resource:create_metrics(ResId),
     QueryMode = emqx_resource:query_mode(ResourceType, Config, Opts),
     case QueryMode of
         %% the resource has built-in buffer, so there is no need for resource workers
@@ -293,6 +274,7 @@ health_check(ResId) ->
     safe_call(ResId, health_check, ?T_OPERATION).
 
 maybe_install_bridge_v2(ResId, Bridge2Id) ->
+    %% TODO use cache to avoid doing inter process communication on every call
     safe_call(ResId, {maybe_install_bridge_v2, Bridge2Id}, ?T_OPERATION).
 
 %% Server start/stop callbacks
@@ -543,12 +525,18 @@ handle_maybe_install_bridge_v2(From, Bridge2Id, Data) ->
     end.
 
 handle_maybe_install_bridge_v2_with_config(From, Bridge2Id, Data, Bridge2Config) ->
-    NewState = emqx_resource:call_maybe_install_bridge_v2(
-        Data#data.id, Data#data.mod, Data#data.state, Bridge2Id, Bridge2Config
-    ),
-    UpdatedData = Data#data{state = NewState},
-    update_state(UpdatedData, Data),
-    {keep_state, UpdatedData, [{reply, From, ok}]}.
+    case
+        emqx_resource:call_maybe_install_bridge_v2(
+            Data#data.id, Data#data.mod, Data#data.state, Bridge2Id, Bridge2Config
+        )
+    of
+        {ok, NewState} ->
+            UpdatedData = Data#data{state = NewState},
+            update_state(UpdatedData, Data),
+            {keep_state, UpdatedData, [{reply, From, ok}]};
+        Error ->
+            {keep_state_and_data, [{reply, From, Error}]}
+    end.
 
 handle_manually_health_check(From, Data) ->
     with_health_check(

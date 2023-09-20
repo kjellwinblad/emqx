@@ -58,7 +58,9 @@
     remove/1,
     remove_local/1,
     reset_metrics/1,
-    reset_metrics_local/1
+    reset_metrics_local/1,
+    %% Create metrics for a resource ID
+    create_metrics/1
 ]).
 
 %% Calls to the callback module with current resource state
@@ -284,8 +286,11 @@ query(ResId, Request) ->
 -spec query(resource_id(), Request :: term(), query_opts()) ->
     Result :: term().
 query(ResId, Request, Opts) ->
-    case emqx_resource_manager:lookup_cached(ResId) of
-        {ok, _Group, #{query_mode := QM, error := Error}} ->
+    %% We keep this A
+    case get_query_mode_error(ResId, Opts) of
+        {error, _} = ErrorTuple ->
+            ErrorTuple;
+        {QM, Error} ->
             case {QM, Error} of
                 {_, unhealthy_target} ->
                     ?RESOURCE_ERROR(unhealthy_target, "unhealthy target");
@@ -304,9 +309,25 @@ query(ResId, Request, Opts) ->
                     emqx_resource_buffer_worker:sync_query(ResId, Request, Opts);
                 {async, _} ->
                     emqx_resource_buffer_worker:async_query(ResId, Request, Opts)
+            end
+    end.
+
+get_query_mode_error(ResId, Opts) ->
+    case emqx_bridge_v2:is_bridge_v2_resource_id(ResId) of
+        true ->
+            case Opts of
+                #{query_mode := QueryMode} ->
+                    {QueryMode, ok};
+                _ ->
+                    {async, unhealthy_target}
             end;
-        {error, not_found} ->
-            ?RESOURCE_ERROR(not_found, "resource not found")
+        false ->
+            case emqx_resource_manager:lookup_cached(ResId) of
+                {ok, _Group, #{query_mode := QM, error := Error}} ->
+                    {QM, Error};
+                {error, not_found} ->
+                    ?RESOURCE_ERROR(not_found, "resource not found")
+            end
     end.
 
 -spec simple_sync_query(resource_id(), Request :: term()) -> Result :: term().
@@ -415,12 +436,29 @@ call_maybe_install_bridge_v2(ResId, Mod, ResourceState, Bridge2Id, Bridge2Config
     %% Check if maybe_install_insert_template is exported
     case erlang:function_exported(Mod, maybe_install_bridge_v2, 4) of
         true ->
-            {ok, NewResourceState} = Mod:maybe_install_bridge_v2(
-                ResId, ResourceState, Bridge2Id, Bridge2Config
-            ),
-            NewResourceState;
+            try
+                Mod:maybe_install_bridge_v2(
+                    ResId, ResourceState, Bridge2Id, Bridge2Config
+                )
+            of
+                {ok, NewResourceState} ->
+                    {ok, NewResourceState};
+                {error, Reason} ->
+                    {error, Reason}
+            catch
+                throw:Error ->
+                    {error, Error};
+                Kind:Error:Stacktrace ->
+                    {error, #{
+                        exception => Kind,
+                        reason => Error,
+                        stacktrace => emqx_utils:redact(Stacktrace)
+                    }}
+            end;
         false ->
-            ResourceState
+            {error,
+                <<<<"maybe_install_bridge_v2 callback function not available for connector with resource id ">>/binary,
+                    ResId/binary>>}
     end.
 
 -spec call_stop(resource_id(), module(), resource_state()) -> term().
@@ -561,6 +599,30 @@ get_allocated_resources_list(InstanceId) ->
 forget_allocated_resources(InstanceId) ->
     true = ets:delete(?RESOURCE_ALLOCATION_TAB, InstanceId),
     ok.
+
+-spec create_metrics(resource_id()) -> ok.
+create_metrics(ResId) ->
+    emqx_metrics_worker:create_metrics(
+        ?RES_METRICS,
+        ResId,
+        [
+            'matched',
+            'retried',
+            'retried.success',
+            'retried.failed',
+            'success',
+            'late_reply',
+            'failed',
+            'dropped',
+            'dropped.expired',
+            'dropped.queue_full',
+            'dropped.resource_not_found',
+            'dropped.resource_stopped',
+            'dropped.other',
+            'received'
+        ],
+        [matched]
+    ).
 
 %% =================================================================================
 
