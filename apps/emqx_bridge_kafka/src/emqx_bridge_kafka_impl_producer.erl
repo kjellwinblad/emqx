@@ -15,7 +15,8 @@
     on_query/3,
     on_query_async/4,
     on_get_status/2,
-    maybe_install_bridge_v2/4
+    maybe_install_bridge_v2/4,
+    maybe_deinstall_bridge_v2/3
 ]).
 
 -export([
@@ -26,7 +27,7 @@
 -include_lib("emqx/include/logger.hrl").
 
 %% Allocatable resources
--define(kafka_resource_id, kafka_resource_id).
+-define(kafka_telementry_id, kafka_telementry_id).
 -define(kafka_client_id, kafka_client_id).
 -define(kafka_producers, kafka_producers).
 
@@ -55,8 +56,6 @@ on_start(<<"connector:", _/binary>> = InstId, Config) ->
     } = Config,
     BridgeType = ?BRIDGE_TYPE,
     ResourceId = emqx_connector_resource:resource_id(BridgeType, ConnectorName),
-    ok = emqx_resource:allocate_resource(InstId, ?kafka_resource_id, ResourceId),
-    _ = maybe_install_wolff_telemetry_handlers(ResourceId),
     Hosts = emqx_bridge_kafka_impl:hosts(Hosts0),
     ClientId = emqx_bridge_kafka_impl:make_client_id(InstId),
     ok = emqx_resource:allocate_resource(InstId, ?kafka_client_id, ClientId),
@@ -91,118 +90,118 @@ on_start(<<"connector:", _/binary>> = InstId, Config) ->
         resource_id => ResourceId,
         hosts => Hosts,
         installed_bridge_v2s => #{}
-    }};
+    }}.
 %% @doc Config schema is defined in emqx_bridge_kafka.
-on_start(InstId, Config) ->
-    #{
-        authentication := Auth,
-        bootstrap_hosts := Hosts0,
-        bridge_name := BridgeName,
-        connect_timeout := ConnTimeout,
-        kafka := KafkaConfig = #{
-            message := MessageTemplate,
-            topic := KafkaTopic,
-            sync_query_timeout := SyncQueryTimeout
-        },
-        metadata_request_timeout := MetaReqTimeout,
-        min_metadata_refresh_interval := MinMetaRefreshInterval,
-        socket_opts := SocketOpts,
-        ssl := SSL
-    } = Config,
-    KafkaHeadersTokens = preproc_kafka_headers(maps:get(kafka_headers, KafkaConfig, undefined)),
-    KafkaExtHeadersTokens = preproc_ext_headers(maps:get(kafka_ext_headers, KafkaConfig, [])),
-    KafkaHeadersValEncodeMode = maps:get(kafka_header_value_encode_mode, KafkaConfig, none),
-    BridgeType = ?BRIDGE_TYPE,
-    ResourceId = emqx_bridge_resource:resource_id(BridgeType, BridgeName),
-    ok = emqx_resource:allocate_resource(InstId, ?kafka_resource_id, ResourceId),
-    _ = maybe_install_wolff_telemetry_handlers(ResourceId),
-    Hosts = emqx_bridge_kafka_impl:hosts(Hosts0),
-    ClientId = emqx_bridge_kafka_impl:make_client_id(InstId),
-    ok = emqx_resource:allocate_resource(InstId, ?kafka_client_id, ClientId),
-    ClientConfig = #{
-        min_metadata_refresh_interval => MinMetaRefreshInterval,
-        connect_timeout => ConnTimeout,
-        client_id => ClientId,
-        request_timeout => MetaReqTimeout,
-        extra_sock_opts => emqx_bridge_kafka_impl:socket_opts(SocketOpts),
-        sasl => emqx_bridge_kafka_impl:sasl(Auth),
-        ssl => ssl(SSL)
-    },
-    case do_get_topic_status(Hosts, KafkaConfig, KafkaTopic) of
-        unhealthy_target ->
-            throw(unhealthy_target);
-        _ ->
-            ok
-    end,
-    case wolff:ensure_supervised_client(ClientId, Hosts, ClientConfig) of
-        {ok, _} ->
-            ?SLOG(info, #{
-                msg => "kafka_client_started",
-                instance_id => InstId,
-                kafka_hosts => Hosts
-            });
-        {error, Reason} ->
-            ?SLOG(error, #{
-                msg => "failed_to_start_kafka_client",
-                instance_id => InstId,
-                kafka_hosts => Hosts,
-                reason => Reason
-            }),
-            throw(failed_to_start_kafka_client)
-    end,
-    %% Check if this is a dry run
-    TestIdStart = string:find(InstId, ?TEST_ID_PREFIX),
-    IsDryRun =
-        case TestIdStart of
-            nomatch ->
-                false;
-            _ ->
-                string:equal(TestIdStart, InstId)
-        end,
-    WolffProducerConfig = producers_config(BridgeName, ClientId, KafkaConfig, IsDryRun),
-    case wolff:ensure_supervised_producers(ClientId, KafkaTopic, WolffProducerConfig) of
-        {ok, Producers} ->
-            ok = emqx_resource:allocate_resource(InstId, ?kafka_producers, Producers),
-            {ok, #{
-                message_template => compile_message_template(MessageTemplate),
-                client_id => ClientId,
-                kafka_topic => KafkaTopic,
-                producers => Producers,
-                resource_id => ResourceId,
-                sync_query_timeout => SyncQueryTimeout,
-                hosts => Hosts,
-                kafka_config => KafkaConfig,
-                headers_tokens => KafkaHeadersTokens,
-                ext_headers_tokens => KafkaExtHeadersTokens,
-                headers_val_encode_mode => KafkaHeadersValEncodeMode
-            }};
-        {error, Reason2} ->
-            ?SLOG(error, #{
-                msg => "failed_to_start_kafka_producer",
-                instance_id => InstId,
-                kafka_hosts => Hosts,
-                kafka_topic => KafkaTopic,
-                reason => Reason2
-            }),
-            %% Need to stop the already running client; otherwise, the
-            %% next `on_start' call will try to ensure the client
-            %% exists and it will be already present and using the old
-            %% config.  This is specially bad if the original crash
-            %% was due to misconfiguration and we are trying to fix
-            %% it...
-            _ = with_log_at_error(
-                fun() -> wolff:stop_and_delete_supervised_client(ClientId) end,
-                #{
-                    msg => "failed_to_delete_kafka_client",
-                    client_id => ClientId
-                }
-            ),
+% on_start(InstId, Config) ->
+%     #{
+%         authentication := Auth,
+%         bootstrap_hosts := Hosts0,
+%         bridge_name := BridgeName,
+%         connect_timeout := ConnTimeout,
+%         kafka := KafkaConfig = #{
+%             message := MessageTemplate,
+%             topic := KafkaTopic,
+%             sync_query_timeout := SyncQueryTimeout
+%         },
+%         metadata_request_timeout := MetaReqTimeout,
+%         min_metadata_refresh_interval := MinMetaRefreshInterval,
+%         socket_opts := SocketOpts,
+%         ssl := SSL
+%     } = Config,
+%     KafkaHeadersTokens = preproc_kafka_headers(maps:get(kafka_headers, KafkaConfig, undefined)),
+%     KafkaExtHeadersTokens = preproc_ext_headers(maps:get(kafka_ext_headers, KafkaConfig, [])),
+%     KafkaHeadersValEncodeMode = maps:get(kafka_header_value_encode_mode, KafkaConfig, none),
+%     BridgeType = ?BRIDGE_TYPE,
+%     ResourceId = emqx_bridge_resource:resource_id(BridgeType, BridgeName),
+%     ok = emqx_resource:allocate_resource(InstId, ?kafka_telementry_id, ResourceId),
+%     _ = maybe_install_wolff_telemetry_handlers(ResourceId),
+%     Hosts = emqx_bridge_kafka_impl:hosts(Hosts0),
+%     ClientId = emqx_bridge_kafka_impl:make_client_id(InstId),
+%     ok = emqx_resource:allocate_resource(InstId, ?kafka_client_id, ClientId),
+%     ClientConfig = #{
+%         min_metadata_refresh_interval => MinMetaRefreshInterval,
+%         connect_timeout => ConnTimeout,
+%         client_id => ClientId,
+%         request_timeout => MetaReqTimeout,
+%         extra_sock_opts => emqx_bridge_kafka_impl:socket_opts(SocketOpts),
+%         sasl => emqx_bridge_kafka_impl:sasl(Auth),
+%         ssl => ssl(SSL)
+%     },
+%     case do_get_topic_status(Hosts, KafkaConfig, KafkaTopic) of
+%         unhealthy_target ->
+%             throw(unhealthy_target);
+%         _ ->
+%             ok
+%     end,
+%     case wolff:ensure_supervised_client(ClientId, Hosts, ClientConfig) of
+%         {ok, _} ->
+%             ?SLOG(info, #{
+%                 msg => "kafka_client_started",
+%                 instance_id => InstId,
+%                 kafka_hosts => Hosts
+%             });
+%         {error, Reason} ->
+%             ?SLOG(error, #{
+%                 msg => "failed_to_start_kafka_client",
+%                 instance_id => InstId,
+%                 kafka_hosts => Hosts,
+%                 reason => Reason
+%             }),
+%             throw(failed_to_start_kafka_client)
+%     end,
+%     %% Check if this is a dry run
+%     TestIdStart = string:find(InstId, ?TEST_ID_PREFIX),
+%     IsDryRun =
+%         case TestIdStart of
+%             nomatch ->
+%                 false;
+%             _ ->
+%                 string:equal(TestIdStart, InstId)
+%         end,
+%     WolffProducerConfig = producers_config(BridgeName, ClientId, KafkaConfig, IsDryRun),
+%     case wolff:ensure_supervised_producers(ClientId, KafkaTopic, WolffProducerConfig) of
+%         {ok, Producers} ->
+%             ok = emqx_resource:allocate_resource(InstId, ?kafka_producers, Producers),
+%             {ok, #{
+%                 message_template => compile_message_template(MessageTemplate),
+%                 client_id => ClientId,
+%                 kafka_topic => KafkaTopic,
+%                 producers => Producers,
+%                 resource_id => ResourceId,
+%                 sync_query_timeout => SyncQueryTimeout,
+%                 hosts => Hosts,
+%                 kafka_config => KafkaConfig,
+%                 headers_tokens => KafkaHeadersTokens,
+%                 ext_headers_tokens => KafkaExtHeadersTokens,
+%                 headers_val_encode_mode => KafkaHeadersValEncodeMode
+%             }};
+%         {error, Reason2} ->
+%             ?SLOG(error, #{
+%                 msg => "failed_to_start_kafka_producer",
+%                 instance_id => InstId,
+%                 kafka_hosts => Hosts,
+%                 kafka_topic => KafkaTopic,
+%                 reason => Reason2
+%             }),
+%             %% Need to stop the already running client; otherwise, the
+%             %% next `on_start' call will try to ensure the client
+%             %% exists and it will be already present and using the old
+%             %% config.  This is specially bad if the original crash
+%             %% was due to misconfiguration and we are trying to fix
+%             %% it...
+%             _ = with_log_at_error(
+%                 fun() -> wolff:stop_and_delete_supervised_client(ClientId) end,
+%                 #{
+%                     msg => "failed_to_delete_kafka_client",
+%                     client_id => ClientId
+%                 }
+%             ),
 
-            throw(
-                "Failed to start Kafka client. Please check the logs for errors and check"
-                " the connection parameters."
-            )
-    end.
+%             throw(
+%                 "Failed to start Kafka client. Please check the logs for errors and check"
+%                 " the connection parameters."
+%             )
+%     end.
 
 maybe_install_bridge_v2(
     InstId,
@@ -230,8 +229,6 @@ maybe_install_bridge_v2(
             {ok, NewState}
     end.
 
-% [<<"connector:kafka:connector_kafka_producer_bridge">>,<<"kafka:kafka_producer_bridge">>,<<"connector:kafka:connector_kafka_producer_bridge:emqx@127.0.0.1">>,[{"127.0.0.1",9092}],#{connector => <<"connector_kafka_producer_bridge">>,enable => true,kafka => #{buffer => #{memory_overload_protection => false,mode => memory,per_partition_limit => 2147483648,segment_bytes => 104857600},compression => no_compression,kafka_header_value_encode_mode => none,max_batch_bytes => 917504,max_inflight => 10,message => #{key => "${.clientid}",timestamp => "${.timestamp}",value => "${.}"},partition_count_refresh_interval => 60,partition_strategy => random,query_mode => async,required_acks => all_isr,sync_query_timeout => 5000,topic => "testtopic-in"},local_topic => <<"kafka_t/#">>,resource_opts => #{health_check_interval => 15000}}]
-
 create_producers_for_bridge_v2(
     InstId,
     BridgeV2Id,
@@ -249,7 +246,7 @@ create_producers_for_bridge_v2(
     KafkaExtHeadersTokens = preproc_ext_headers(maps:get(kafka_ext_headers, KafkaConfig, [])),
     KafkaHeadersValEncodeMode = maps:get(kafka_header_value_encode_mode, KafkaConfig, none),
     {_BridgeType, BridgeName} = emqx_bridge_v2:parse_id(BridgeV2Id),
-    ok = emqx_resource:allocate_resource(InstId, ?kafka_resource_id, BridgeV2Id),
+    ok = emqx_resource:allocate_resource(InstId, {?kafka_telementry_id, BridgeV2Id}, BridgeV2Id),
     _ = maybe_install_wolff_telemetry_handlers(BridgeV2Id),
     TestIdStart = string:find(BridgeV2Id, ?TEST_ID_PREFIX),
     IsDryRun =
@@ -259,10 +256,10 @@ create_producers_for_bridge_v2(
             _ ->
                 string:equal(TestIdStart, InstId)
         end,
-    WolffProducerConfig = producers_config(BridgeName, ClientId, KafkaConfig, IsDryRun),
+    WolffProducerConfig = producers_config(BridgeName, ClientId, KafkaConfig, IsDryRun, BridgeV2Id),
     case wolff:ensure_supervised_producers(ClientId, KafkaTopic, WolffProducerConfig) of
         {ok, Producers} ->
-            ok = emqx_resource:allocate_resource(InstId, ?kafka_producers, Producers),
+            ok = emqx_resource:allocate_resource(InstId, {?kafka_producers, BridgeV2Id}, Producers),
             {ok, #{
                 message_template => compile_message_template(MessageTemplate),
                 client_id => ClientId,
@@ -305,64 +302,154 @@ create_producers_for_bridge_v2(
     end.
 
 on_stop(InstanceId, _State) ->
-    case emqx_resource:get_allocated_resources(InstanceId) of
-        #{
-            ?kafka_client_id := ClientId,
-            ?kafka_producers := Producers,
-            ?kafka_resource_id := ResourceId
-        } ->
-            _ = with_log_at_error(
-                fun() -> wolff:stop_and_delete_supervised_producers(Producers) end,
-                #{
-                    msg => "failed_to_delete_kafka_producer",
-                    client_id => ClientId
-                }
-            ),
-            _ = with_log_at_error(
-                fun() -> wolff:stop_and_delete_supervised_client(ClientId) end,
-                #{
-                    msg => "failed_to_delete_kafka_client",
-                    client_id => ClientId
-                }
-            ),
-            _ = with_log_at_error(
-                fun() -> uninstall_telemetry_handlers(ResourceId) end,
-                #{
-                    msg => "failed_to_uninstall_telemetry_handlers",
-                    resource_id => ResourceId
-                }
-            ),
+    AllocatedResources = emqx_resource:get_allocated_resources(InstanceId),
+    ClientId = maps:get(?kafka_client_id, AllocatedResources, undefined),
+    case ClientId of
+        undefined ->
             ok;
-        #{?kafka_client_id := ClientId, ?kafka_resource_id := ResourceId} ->
-            _ = with_log_at_error(
-                fun() -> wolff:stop_and_delete_supervised_client(ClientId) end,
-                #{
-                    msg => "failed_to_delete_kafka_client",
-                    client_id => ClientId
-                }
-            ),
-            _ = with_log_at_error(
-                fun() -> uninstall_telemetry_handlers(ResourceId) end,
-                #{
-                    msg => "failed_to_uninstall_telemetry_handlers",
-                    resource_id => ResourceId
-                }
-            ),
-            ok;
-        #{?kafka_resource_id := ResourceId} ->
-            _ = with_log_at_error(
-                fun() -> uninstall_telemetry_handlers(ResourceId) end,
-                #{
-                    msg => "failed_to_uninstall_telemetry_handlers",
-                    resource_id => ResourceId
-                }
-            ),
-            ok;
-        _ ->
-            ok
+        ClientId ->
+            deallocate_client(ClientId)
     end,
-    ?tp(kafka_producer_stopped, #{instance_id => InstanceId}),
+    maps:foreach(
+        fun
+            ({?kafka_producers, _BridgeV2Id}, Producers) ->
+                deallocate_producers(ClientId, Producers);
+            ({?kafka_telementry_id, _BridgeV2Id}, TelementryId) ->
+                deallocate_telementry_handlers(TelementryId);
+            (_, _) ->
+                ok
+        end,
+        AllocatedResources
+    ),
     ok.
+
+deallocate_client(ClientId) ->
+    _ = with_log_at_error(
+        fun() -> wolff:stop_and_delete_supervised_client(ClientId) end,
+        #{
+            msg => "failed_to_delete_kafka_client",
+            client_id => ClientId
+        }
+    ).
+
+deallocate_producers(ClientId, Producers) ->
+    _ = with_log_at_error(
+        fun() -> wolff:stop_and_delete_supervised_producers(Producers) end,
+        #{
+            msg => "failed_to_delete_kafka_producer",
+            client_id => ClientId
+        }
+    ).
+
+deallocate_telementry_handlers(TelementryId) ->
+    _ = with_log_at_error(
+        fun() -> uninstall_telemetry_handlers(TelementryId) end,
+        #{
+            msg => "failed_to_uninstall_telemetry_handlers",
+            resource_id => TelementryId
+        }
+    ).
+
+% case  of
+%     #{
+%         ?kafka_client_id := ClientId,
+%         ?kafka_producers := Producers,
+%         ?kafka_telementry_id := ResourceId
+%     } ->
+%         _ = with_log_at_error(
+%             fun() -> wolff:stop_and_delete_supervised_producers(Producers) end,
+%             #{
+%                 msg => "failed_to_delete_kafka_producer",
+%                 client_id => ClientId
+%             }
+%         ),
+%         _ = with_log_at_error(
+%             fun() -> wolff:stop_and_delete_supervised_client(ClientId) end,
+%             #{
+%                 msg => "failed_to_delete_kafka_client",
+%                 client_id => ClientId
+%             }
+%         ),
+%         _ = with_log_at_error(
+%             fun() -> uninstall_telemetry_handlers(ResourceId) end,
+%             #{
+%                 msg => "failed_to_uninstall_telemetry_handlers",
+%                 resource_id => ResourceId
+%             }
+%         ),
+%         ok;
+%     #{?kafka_client_id := ClientId, ?kafka_telementry_id := ResourceId} ->
+%         _ = with_log_at_error(
+%             fun() -> wolff:stop_and_delete_supervised_client(ClientId) end,
+%             #{
+%                 msg => "failed_to_delete_kafka_client",
+%                 client_id => ClientId
+%             }
+%         ),
+%         _ = with_log_at_error(
+%             fun() -> uninstall_telemetry_handlers(ResourceId) end,
+%             #{
+%                 msg => "failed_to_uninstall_telemetry_handlers",
+%                 resource_id => ResourceId
+%             }
+%         ),
+%         ok;
+%     #{?kafka_telementry_id := ResourceId} ->
+%         _ = with_log_at_error(
+%             fun() -> uninstall_telemetry_handlers(ResourceId) end,
+%             #{
+%                 msg => "failed_to_uninstall_telemetry_handlers",
+%                 resource_id => ResourceId
+%             }
+%         ),
+%         ok;
+%     _ ->
+%         ok
+% end,
+% ?tp(kafka_producer_stopped, #{instance_id => InstanceId}),
+% ok.
+
+remove_producers_for_bridge_v2(
+    InstId, BridgeV2Id
+) ->
+    AllocatedResources = emqx_resource:get_allocated_resources(InstId),
+    ClientId = maps:get(?kafka_client_id, AllocatedResources, no_client_id),
+    maps:foreach(
+        fun
+            ({?kafka_producers, BridgeV2IdCheck}, Producers) when BridgeV2IdCheck =:= BridgeV2Id ->
+                deallocate_producers(ClientId, Producers);
+            ({?kafka_telementry_id, BridgeV2IdCheck}, TelementryId) when
+                BridgeV2IdCheck =:= BridgeV2Id
+            ->
+                deallocate_telementry_handlers(TelementryId);
+            (_, _) ->
+                ok
+        end,
+        AllocatedResources
+    ),
+    ok.
+
+maybe_deinstall_bridge_v2(
+    InstId,
+    #{
+        client_id := _ClientId,
+        hosts := _Hosts,
+        installed_bridge_v2s := InstalledBridgeV2s
+    } = OldState,
+    BridgeV2Id
+) ->
+    case maps:is_key(BridgeV2Id, InstalledBridgeV2s) of
+        true ->
+            %% Deinstall
+            ok = remove_producers_for_bridge_v2(InstId, BridgeV2Id),
+            NewInstalledBridgeV2s = maps:remove(BridgeV2Id, InstalledBridgeV2s),
+            %% Update state
+            NewState = OldState#{installed_bridge_v2s => NewInstalledBridgeV2s},
+            {ok, NewState};
+        false ->
+            %% Already deinstalled
+            {ok, OldState}
+    end.
 
 on_query(
     InstId,
@@ -628,7 +715,7 @@ ssl(#{enable := true} = SSL) ->
 ssl(_) ->
     [].
 
-producers_config(BridgeName, ClientId, Input, IsDryRun) ->
+producers_config(BridgeName, ClientId, Input, IsDryRun, BridgeV2Id) ->
     #{
         max_batch_bytes := MaxBatchBytes,
         compression := Compression,
@@ -654,8 +741,6 @@ producers_config(BridgeName, ClientId, Input, IsDryRun) ->
             disk -> {false, replayq_dir(ClientId)};
             hybrid -> {true, replayq_dir(ClientId)}
         end,
-    BridgeType = ?BRIDGE_TYPE,
-    ResourceID = emqx_bridge_resource:resource_id(BridgeType, BridgeName),
     #{
         name => make_producer_name(BridgeName, IsDryRun),
         partitioner => partitioner(PartitionStrategy),
@@ -669,7 +754,7 @@ producers_config(BridgeName, ClientId, Input, IsDryRun) ->
         max_batch_bytes => MaxBatchBytes,
         max_send_ahead => MaxInflight - 1,
         compression => Compression,
-        telemetry_meta_data => #{bridge_id => ResourceID}
+        telemetry_meta_data => #{bridge_id => BridgeV2Id}
     }.
 
 %% Wolff API is a batch API.

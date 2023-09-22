@@ -19,6 +19,7 @@
 -include("emqx_resource.hrl").
 -include("emqx_resource_utils.hrl").
 -include("emqx_resource_errors.hrl").
+-include_lib("emqx/include/logger.hrl").
 
 %% APIs for resource types
 
@@ -60,7 +61,9 @@
     reset_metrics/1,
     reset_metrics_local/1,
     %% Create metrics for a resource ID
-    create_metrics/1
+    create_metrics/1,
+    %% Delete metrics for a resource ID
+    clear_metrics/1
 ]).
 
 %% Calls to the callback module with current resource state
@@ -105,7 +108,9 @@
     %% get the query mode of the resource
     query_mode/3,
     %% Install bridge 2 into a connector
-    call_maybe_install_bridge_v2/5
+    call_maybe_install_bridge_v2/5,
+    %% Deinstall bridge 2 from a connector
+    call_maybe_deinstall_bridge_v2/4
 ]).
 
 %% list all the instances, id only.
@@ -139,7 +144,8 @@
     on_batch_query_async/4,
     on_get_status/2,
     query_mode/1,
-    maybe_install_bridge_v2/4
+    maybe_install_bridge_v2/4,
+    maybe_deinstall_bridge_v2/3
 ]).
 
 %% when calling emqx_resource:start/1
@@ -184,6 +190,10 @@
 
 -callback maybe_install_bridge_v2(
     ResId :: term(), ResourceState :: term(), Bridge2ResourceId :: binary(), Bridge2Config :: map()
+) -> {ok, NewState :: term()}.
+
+-callback maybe_deinstall_bridge_v2(
+    ResId :: term(), ResourceState :: term(), Bridge2ResourceId :: binary()
 ) -> {ok, NewState :: term()}.
 
 -spec list_types() -> [module()].
@@ -448,16 +458,40 @@ call_maybe_install_bridge_v2(ResId, Mod, ResourceState, Bridge2Id, Bridge2Config
             catch
                 throw:Error ->
                     {error, Error};
-                Kind:Error:Stacktrace ->
-                    {error, #{
+                Kind:Reason:Stacktrace ->
+                    ?SLOG(error, #{
                         exception => Kind,
-                        reason => Error,
+                        reason => Reason,
                         stacktrace => emqx_utils:redact(Stacktrace)
-                    }}
+                    }),
+                    {error, Reason}
             end;
         false ->
             {error,
                 <<<<"maybe_install_bridge_v2 callback function not available for connector with resource id ">>/binary,
+                    ResId/binary>>}
+    end.
+
+call_maybe_deinstall_bridge_v2(ResId, Mod, ResourceState, Bridge2Id) ->
+    %% Check if maybe_install_insert_template is exported
+    case erlang:function_exported(Mod, maybe_deinstall_bridge_v2, 3) of
+        true ->
+            try
+                Mod:maybe_deinstall_bridge_v2(
+                    ResId, ResourceState, Bridge2Id
+                )
+            catch
+                Kind:Reason:Stacktrace ->
+                    ?SLOG(error, #{
+                        exception => Kind,
+                        reason => Reason,
+                        stacktrace => emqx_utils:redact(Stacktrace)
+                    }),
+                    {error, Reason}
+            end;
+        false ->
+            {error,
+                <<<<"maybe_deinstall_bridge_v2 callback function not available for connector with resource id ">>/binary,
                     ResId/binary>>}
     end.
 
@@ -624,6 +658,9 @@ create_metrics(ResId) ->
         [matched]
     ).
 
+-spec clear_metrics(resource_id()) -> ok.
+clear_metrics(ResId) ->
+    emqx_metrics_worker:clear_metrics(?RES_METRICS, ResId).
 %% =================================================================================
 
 filter_instances(Filter) ->

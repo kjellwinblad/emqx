@@ -30,7 +30,8 @@
     start/2,
     stop/1,
     health_check/1,
-    maybe_install_bridge_v2/2
+    maybe_install_bridge_v2/2,
+    maybe_deinstall_bridge_v2/2
 ]).
 
 -export([
@@ -277,6 +278,9 @@ maybe_install_bridge_v2(ResId, Bridge2Id) ->
     %% TODO use cache to avoid doing inter process communication on every call
     safe_call(ResId, {maybe_install_bridge_v2, Bridge2Id}, ?T_OPERATION).
 
+maybe_deinstall_bridge_v2(ResId, Bridge2Id) ->
+    safe_call(ResId, {maybe_deinstall_bridge_v2, Bridge2Id}, ?T_OPERATION).
+
 %% Server start/stop callbacks
 
 %% @doc Function called from the supervisor to actually start the server
@@ -397,6 +401,10 @@ handle_event(
     {call, From}, {maybe_install_bridge_v2, Bridge2Id}, _State, Data
 ) ->
     handle_maybe_install_bridge_v2(From, Bridge2Id, Data);
+handle_event(
+    {call, From}, {maybe_deinstall_bridge_v2, Bridge2Id}, _State, Data
+) ->
+    handle_maybe_deinstall_bridge_v2(From, Bridge2Id, Data);
 handle_event(EventType, EventData, State, Data) ->
     ?SLOG(
         error,
@@ -516,7 +524,7 @@ make_test_id() ->
     <<?TEST_ID_PREFIX, RandId/binary>>.
 
 handle_maybe_install_bridge_v2(From, Bridge2Id, Data) ->
-    %% Look up the bridge2 config from config
+    %% Look up the bridge2 config
     case emqx_bridge_v2:lookup(Bridge2Id) of
         {error, _Msg} = Error ->
             {keep_state_and_data, [{reply, From, Error}]};
@@ -528,6 +536,20 @@ handle_maybe_install_bridge_v2_with_config(From, Bridge2Id, Data, Bridge2Config)
     case
         emqx_resource:call_maybe_install_bridge_v2(
             Data#data.id, Data#data.mod, Data#data.state, Bridge2Id, Bridge2Config
+        )
+    of
+        {ok, NewState} ->
+            UpdatedData = Data#data{state = NewState},
+            update_state(UpdatedData, Data),
+            {keep_state, UpdatedData, [{reply, From, ok}]};
+        Error ->
+            {keep_state_and_data, [{reply, From, Error}]}
+    end.
+
+handle_maybe_deinstall_bridge_v2(From, Bridge2Id, Data) ->
+    case
+        emqx_resource:call_maybe_deinstall_bridge_v2(
+            Data#data.id, Data#data.mod, Data#data.state, Bridge2Id
         )
     of
         {ok, NewState} ->
