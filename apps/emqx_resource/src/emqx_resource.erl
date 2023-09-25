@@ -188,12 +188,35 @@
 
 -callback query_mode(Config :: term()) -> query_mode().
 
+%% This callback handles the installation of a given Bridge V2 into a connector.
+%%
+%% If the Bridge V2 is already installed, the function should return
+%% `{ok, ResourceState}`, where `ResourceState` is the input state. If not installed,
+%% it should attempt installation. Upon successful installation, it should return a new
+%% state with the state of the installed Bridge V2 encapsulated within the
+%% `installed_bridge_v2s` map.
+%%
+%% The Bridge V2 state must be stored in the `installed_bridge_v2s` map using the
+%% Bridge V2 ID (BridgeV2Id) as the key, as the caching mechanism depends on this structure.
+%%
+%% If the Bridge V2 cannot be successfully installed, the callback shall throw an exception.
 -callback maybe_install_bridge_v2(
-    ResId :: term(), ResourceState :: term(), Bridge2ResourceId :: binary(), Bridge2Config :: map()
-) -> {ok, NewState :: term()}.
+    ResId :: term(), ResourceState :: term(), BridgeV2Id :: binary(), Bridge2Config :: map()
+) -> {ok, NewState :: #{installed_bridge_v2s := map()}}.
 
+%% This callback handles the deinstallation of a given Bridge V2 resource.
+%%
+%% If the Bridge V2 is not present in the `ResourceState`, the function should
+%% simply return `{ok, ResourceState}`, where `ResourceState` is the input state.
+%% If the Bridge V2 is found, the callback should return a new
+%% state where the Bridge V2 ID key has been removed from the `installed_bridge_v2s` map.
+%%
+%% If the Bridge V2 cannot be successfully deinstalled the function shall log
+%% an error.
+%%
+%% Also see the documentation for `maybe_install_bridge_v2/4`.
 -callback maybe_deinstall_bridge_v2(
-    ResId :: term(), ResourceState :: term(), Bridge2ResourceId :: binary()
+    ResId :: term(), ResourceState :: term(), BridgeV2Id :: binary()
 ) -> {ok, NewState :: term()}.
 
 -spec list_types() -> [module()].

@@ -275,8 +275,31 @@ health_check(ResId) ->
     safe_call(ResId, health_check, ?T_OPERATION).
 
 maybe_install_bridge_v2(ResId, Bridge2Id) ->
-    %% TODO use cache to avoid doing inter process communication on every call
-    safe_call(ResId, {maybe_install_bridge_v2, Bridge2Id}, ?T_OPERATION).
+    %% Use cache to avoid doing inter process communication on every call
+    ResourceData = read_cache(ResId),
+    do_maybe_install_bridge_v2_with_cached_data(
+        ResId,
+        Bridge2Id,
+        ResourceData#data.status,
+        ResourceData#data.state
+    ).
+
+do_maybe_install_bridge_v2_with_cached_data(
+    _ResId,
+    BridgeV2Id,
+    connected,
+    #{installed_bridge_v2s := InstalledBridgeV2s}
+) when
+    is_map_key(BridgeV2Id, InstalledBridgeV2s)
+->
+    ok;
+do_maybe_install_bridge_v2_with_cached_data(
+    ResId,
+    BridgeV2Id,
+    _Status,
+    _State
+) ->
+    safe_call(ResId, {maybe_install_bridge_v2, BridgeV2Id}, ?T_OPERATION).
 
 maybe_deinstall_bridge_v2(ResId, Bridge2Id) ->
     safe_call(ResId, {maybe_deinstall_bridge_v2, Bridge2Id}, ?T_OPERATION).
