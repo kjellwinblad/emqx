@@ -31,7 +31,7 @@
     stop/1,
     health_check/1,
     maybe_install_bridge_v2/2,
-    maybe_deinstall_bridge_v2/2
+    maybe_uninstall_bridge_v2/2
 ]).
 
 -export([
@@ -301,8 +301,8 @@ do_maybe_install_bridge_v2_with_cached_data(
 ) ->
     safe_call(ResId, {maybe_install_bridge_v2, BridgeV2Id}, ?T_OPERATION).
 
-maybe_deinstall_bridge_v2(ResId, Bridge2Id) ->
-    safe_call(ResId, {maybe_deinstall_bridge_v2, Bridge2Id}, ?T_OPERATION).
+maybe_uninstall_bridge_v2(ResId, Bridge2Id) ->
+    safe_call(ResId, {maybe_uninstall_bridge_v2, Bridge2Id}, ?T_OPERATION).
 
 %% Server start/stop callbacks
 
@@ -425,9 +425,9 @@ handle_event(
 ) ->
     handle_maybe_install_bridge_v2(From, Bridge2Id, Data);
 handle_event(
-    {call, From}, {maybe_deinstall_bridge_v2, Bridge2Id}, _State, Data
+    {call, From}, {maybe_uninstall_bridge_v2, Bridge2Id}, _State, Data
 ) ->
-    handle_maybe_deinstall_bridge_v2(From, Bridge2Id, Data);
+    handle_maybe_uninstall_bridge_v2(From, Bridge2Id, Data);
 handle_event(EventType, EventData, State, Data) ->
     ?SLOG(
         error,
@@ -546,7 +546,19 @@ make_test_id() ->
     RandId = iolist_to_binary(emqx_utils:gen_id(16)),
     <<?TEST_ID_PREFIX, RandId/binary>>.
 
-handle_maybe_install_bridge_v2(From, Bridge2Id, Data) ->
+handle_maybe_install_bridge_v2(From, BridgeV2Id, Data) ->
+    case emqx_bridge_v2:is_bridge_v2_installed_in_connector_state(BridgeV2Id, Data#data.state) of
+        true ->
+            %% The bridge_v2 is already installed in the connector state
+            %% We don't need to install it again
+            {keep_state_and_data, [{reply, From, ok}]};
+        false ->
+            %% The bridge_v2 is not installed in the connector state
+            %% We need to install it
+            handle_maybe_install_bridge_v2_need_insert(From, BridgeV2Id, Data)
+    end.
+
+handle_maybe_install_bridge_v2_need_insert(From, Bridge2Id, Data) ->
     %% Look up the bridge2 config
     case emqx_bridge_v2:lookup(Bridge2Id) of
         {error, _Msg} = Error ->
@@ -557,7 +569,7 @@ handle_maybe_install_bridge_v2(From, Bridge2Id, Data) ->
 
 handle_maybe_install_bridge_v2_with_config(From, Bridge2Id, Data, Bridge2Config) ->
     case
-        emqx_resource:call_maybe_install_bridge_v2(
+        emqx_resource:call_install_bridge_v2(
             Data#data.id, Data#data.mod, Data#data.state, Bridge2Id, Bridge2Config
         )
     of
@@ -569,10 +581,20 @@ handle_maybe_install_bridge_v2_with_config(From, Bridge2Id, Data, Bridge2Config)
             {keep_state_and_data, [{reply, From, Error}]}
     end.
 
-handle_maybe_deinstall_bridge_v2(From, Bridge2Id, Data) ->
+handle_maybe_uninstall_bridge_v2(From, BridgeV2Id, Data) ->
+    case emqx_bridge_v2:is_bridge_v2_installed_in_connector_state(BridgeV2Id, Data#data.state) of
+        false ->
+            %% The bridge_v2 is already not installed in the connector state
+            {keep_state_and_data, [{reply, From, ok}]};
+        true ->
+            %% The bridge_v2 is installed in the connector state
+            handle_maybe_uninstall_bridge_v2_exists(From, BridgeV2Id, Data)
+    end.
+
+handle_maybe_uninstall_bridge_v2_exists(From, BridgeV2Id, Data) ->
     case
-        emqx_resource:call_maybe_deinstall_bridge_v2(
-            Data#data.id, Data#data.mod, Data#data.state, Bridge2Id
+        emqx_resource:call_uninstall_bridge_v2(
+            Data#data.id, Data#data.mod, Data#data.state, BridgeV2Id
         )
     of
         {ok, NewState} ->

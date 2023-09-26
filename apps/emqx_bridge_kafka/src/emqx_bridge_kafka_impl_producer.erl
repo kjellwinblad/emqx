@@ -15,8 +15,8 @@
     on_query/3,
     on_query_async/4,
     on_get_status/2,
-    maybe_install_bridge_v2/4,
-    maybe_deinstall_bridge_v2/3
+    install_bridge_v2/4,
+    uninstall_bridge_v2/3
 ]).
 
 -export([
@@ -203,7 +203,7 @@ on_start(<<"connector:", _/binary>> = InstId, Config) ->
 %             )
 %     end.
 
-maybe_install_bridge_v2(
+install_bridge_v2(
     InstId,
     #{
         client_id := ClientId,
@@ -213,21 +213,14 @@ maybe_install_bridge_v2(
     BridgeV2Id,
     BridgeV2Config
 ) ->
-    case maps:is_key(BridgeV2Id, InstalledBridgeV2s) of
-        true ->
-            %% Already installed
-            {ok, OldState};
-        false ->
-            %% Install
-            %% The following will throw an exception if the bridge producers fails to start
-            {ok, BridgeV2State} = create_producers_for_bridge_v2(
-                InstId, BridgeV2Id, ClientId, Hosts, BridgeV2Config
-            ),
-            NewInstalledBridgeV2s = maps:put(BridgeV2Id, BridgeV2State, InstalledBridgeV2s),
-            %% Update state
-            NewState = OldState#{installed_bridge_v2s => NewInstalledBridgeV2s},
-            {ok, NewState}
-    end.
+    %% The following will throw an exception if the bridge producers fails to start
+    {ok, BridgeV2State} = create_producers_for_bridge_v2(
+        InstId, BridgeV2Id, ClientId, Hosts, BridgeV2Config
+    ),
+    NewInstalledBridgeV2s = maps:put(BridgeV2Id, BridgeV2State, InstalledBridgeV2s),
+    %% Update state
+    NewState = OldState#{installed_bridge_v2s => NewInstalledBridgeV2s},
+    {ok, NewState}.
 
 create_producers_for_bridge_v2(
     InstId,
@@ -246,8 +239,6 @@ create_producers_for_bridge_v2(
     KafkaExtHeadersTokens = preproc_ext_headers(maps:get(kafka_ext_headers, KafkaConfig, [])),
     KafkaHeadersValEncodeMode = maps:get(kafka_header_value_encode_mode, KafkaConfig, none),
     {_BridgeType, BridgeName} = emqx_bridge_v2:parse_id(BridgeV2Id),
-    ok = emqx_resource:allocate_resource(InstId, {?kafka_telementry_id, BridgeV2Id}, BridgeV2Id),
-    _ = maybe_install_wolff_telemetry_handlers(BridgeV2Id),
     TestIdStart = string:find(BridgeV2Id, ?TEST_ID_PREFIX),
     IsDryRun =
         case TestIdStart of
@@ -256,6 +247,10 @@ create_producers_for_bridge_v2(
             _ ->
                 string:equal(TestIdStart, InstId)
         end,
+    ok = check_topic_status(Hosts, KafkaConfig, KafkaTopic),
+    ok = check_if_healthy_leaders(ClientId, KafkaTopic),
+    ok = emqx_resource:allocate_resource(InstId, {?kafka_telementry_id, BridgeV2Id}, BridgeV2Id),
+    _ = maybe_install_wolff_telemetry_handlers(BridgeV2Id),
     WolffProducerConfig = producers_config(BridgeName, ClientId, KafkaConfig, IsDryRun, BridgeV2Id),
     case wolff:ensure_supervised_producers(ClientId, KafkaTopic, WolffProducerConfig) of
         {ok, Producers} ->
@@ -350,65 +345,6 @@ deallocate_telementry_handlers(TelementryId) ->
         }
     ).
 
-% case  of
-%     #{
-%         ?kafka_client_id := ClientId,
-%         ?kafka_producers := Producers,
-%         ?kafka_telementry_id := ResourceId
-%     } ->
-%         _ = with_log_at_error(
-%             fun() -> wolff:stop_and_delete_supervised_producers(Producers) end,
-%             #{
-%                 msg => "failed_to_delete_kafka_producer",
-%                 client_id => ClientId
-%             }
-%         ),
-%         _ = with_log_at_error(
-%             fun() -> wolff:stop_and_delete_supervised_client(ClientId) end,
-%             #{
-%                 msg => "failed_to_delete_kafka_client",
-%                 client_id => ClientId
-%             }
-%         ),
-%         _ = with_log_at_error(
-%             fun() -> uninstall_telemetry_handlers(ResourceId) end,
-%             #{
-%                 msg => "failed_to_uninstall_telemetry_handlers",
-%                 resource_id => ResourceId
-%             }
-%         ),
-%         ok;
-%     #{?kafka_client_id := ClientId, ?kafka_telementry_id := ResourceId} ->
-%         _ = with_log_at_error(
-%             fun() -> wolff:stop_and_delete_supervised_client(ClientId) end,
-%             #{
-%                 msg => "failed_to_delete_kafka_client",
-%                 client_id => ClientId
-%             }
-%         ),
-%         _ = with_log_at_error(
-%             fun() -> uninstall_telemetry_handlers(ResourceId) end,
-%             #{
-%                 msg => "failed_to_uninstall_telemetry_handlers",
-%                 resource_id => ResourceId
-%             }
-%         ),
-%         ok;
-%     #{?kafka_telementry_id := ResourceId} ->
-%         _ = with_log_at_error(
-%             fun() -> uninstall_telemetry_handlers(ResourceId) end,
-%             #{
-%                 msg => "failed_to_uninstall_telemetry_handlers",
-%                 resource_id => ResourceId
-%             }
-%         ),
-%         ok;
-%     _ ->
-%         ok
-% end,
-% ?tp(kafka_producer_stopped, #{instance_id => InstanceId}),
-% ok.
-
 remove_producers_for_bridge_v2(
     InstId, BridgeV2Id
 ) ->
@@ -429,7 +365,7 @@ remove_producers_for_bridge_v2(
     ),
     ok.
 
-maybe_deinstall_bridge_v2(
+uninstall_bridge_v2(
     InstId,
     #{
         client_id := _ClientId,
@@ -438,22 +374,17 @@ maybe_deinstall_bridge_v2(
     } = OldState,
     BridgeV2Id
 ) ->
-    case maps:is_key(BridgeV2Id, InstalledBridgeV2s) of
-        true ->
-            %% Deinstall
-            ok = remove_producers_for_bridge_v2(InstId, BridgeV2Id),
-            NewInstalledBridgeV2s = maps:remove(BridgeV2Id, InstalledBridgeV2s),
-            %% Update state
-            NewState = OldState#{installed_bridge_v2s => NewInstalledBridgeV2s},
-            {ok, NewState};
-        false ->
-            %% Already deinstalled
-            {ok, OldState}
-    end.
+    ok = remove_producers_for_bridge_v2(InstId, BridgeV2Id),
+    NewInstalledBridgeV2s = maps:remove(BridgeV2Id, InstalledBridgeV2s),
+    %% Update state
+    NewState = OldState#{installed_bridge_v2s => NewInstalledBridgeV2s},
+    {ok, NewState}.
 
 on_query(
     InstId,
-    {send_message, Message},
+    {MessageTag, Message},
+    #{installed_bridge_v2s := BridgeV2Configs} = _ConnectorState
+) ->
     #{
         message_template := Template,
         producers := Producers,
@@ -461,8 +392,7 @@ on_query(
         headers_tokens := KafkaHeadersTokens,
         ext_headers_tokens := KafkaExtHeadersTokens,
         headers_val_encode_mode := KafkaHeadersValEncodeMode
-    }
-) ->
+    } = maps:get(MessageTag, BridgeV2Configs),
     KafkaHeaders = #{
         headers_tokens => KafkaHeadersTokens,
         ext_headers_tokens => KafkaExtHeadersTokens,
@@ -653,61 +583,64 @@ on_get_status(
             end;
         {error, _Reason} ->
             connecting
+    end.
+
+check_if_healthy_leaders(Client, KafkaTopic) when is_pid(Client) ->
+    Leaders =
+        case wolff_client:get_leader_connections(Client, KafkaTopic) of
+            {ok, LeadersToCheck} ->
+                %% Kafka is considered healthy as long as any of the partition leader is reachable.
+                lists:filtermap(
+                    fun({_Partition, Pid}) ->
+                        case is_pid(Pid) andalso erlang:is_process_alive(Pid) of
+                            true -> {true, Pid};
+                            _ -> false
+                        end
+                    end,
+                    LeadersToCheck
+                );
+            {error, _} ->
+                []
+        end,
+    case Leaders of
+        [] ->
+            throw(
+                iolist_to_binary(
+                    io_lib:format("Could not find any healthy partion leader for topic ~s", [
+                        KafkaTopic
+                    ])
+                )
+            );
+        _ ->
+            ok
     end;
-on_get_status(_InstId, #{client_id := ClientId} = State) ->
+check_if_healthy_leaders(ClientId, KafkaTopic) ->
     case wolff_client_sup:find_client(ClientId) of
         {ok, Pid} ->
-            case do_get_status(Pid, State) of
-                ok -> connected;
-                unhealthy_target -> {disconnected, State, unhealthy_target};
-                error -> connecting
-            end;
+            check_if_healthy_leaders(Pid, KafkaTopic);
         {error, _Reason} ->
-            connecting
+            throw(iolist_to_binary(io_lib:format("Could not find Kafka client: ~p", [ClientId])))
     end.
 
-do_get_status(Client, #{kafka_topic := KafkaTopic, hosts := Hosts, kafka_config := KafkaConfig}) ->
-    case do_get_topic_status(Hosts, KafkaConfig, KafkaTopic) of
-        unhealthy_target ->
-            unhealthy_target;
-        _ ->
-            case do_get_healthy_leaders(Client, KafkaTopic) of
-                [] -> error;
-                _ -> ok
-            end
-    end.
-
-do_get_healthy_leaders(Client, KafkaTopic) ->
-    case wolff_client:get_leader_connections(Client, KafkaTopic) of
-        {ok, Leaders} ->
-            %% Kafka is considered healthy as long as any of the partition leader is reachable.
-            lists:filtermap(
-                fun({_Partition, Pid}) ->
-                    case is_pid(Pid) andalso erlang:is_process_alive(Pid) of
-                        true -> {true, Pid};
-                        _ -> false
-                    end
-                end,
-                Leaders
-            );
-        {error, _} ->
-            []
-    end.
-
-do_get_topic_status(Hosts, KafkaConfig, KafkaTopic) ->
+check_topic_status(Hosts, KafkaConfig, KafkaTopic) ->
     CheckTopicFun =
         fun() ->
             wolff_client:check_if_topic_exists(Hosts, KafkaConfig, KafkaTopic)
         end,
     try
         case emqx_utils:nolink_apply(CheckTopicFun, 5_000) of
-            ok -> ok;
-            {error, unknown_topic_or_partition} -> unhealthy_target;
-            _ -> error
+            ok ->
+                ok;
+            {error, unknown_topic_or_partition} ->
+                throw(
+                    iolist_to_binary(io_lib:format("Unknown topic or partition ~s", [KafkaTopic]))
+                );
+            _ ->
+                ok
         end
     catch
         _:_ ->
-            error
+            ok
     end.
 
 ssl(#{enable := true} = SSL) ->

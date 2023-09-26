@@ -32,8 +32,9 @@
     parse_id/1,
     send_message/4,
     bridge_v2_type_to_connector_type/1,
-    is_bridge_v2_resource_id/1,
-    extract_connector_id_from_bridge_v2_id/1
+    is_bridge_v2_id/1,
+    extract_connector_id_from_bridge_v2_id/1,
+    is_bridge_v2_installed_in_connector_state/2
 ]).
 
 %% CRUD API
@@ -141,7 +142,7 @@ uninstall_bridge_v2(
     ok = emqx_resource:clear_metrics(BridgeV2Id),
     %% Deinstall from connector
     ConnectorResourceId = extract_connector_id_from_bridge_v2_id(BridgeV2Id),
-    ok = emqx_resource_manager:maybe_deinstall_bridge_v2(ConnectorResourceId, BridgeV2Id),
+    ok = emqx_resource_manager:maybe_uninstall_bridge_v2(ConnectorResourceId, BridgeV2Id),
     ok.
 
 get_query_mode(BridgeV2Type, Config) ->
@@ -232,8 +233,8 @@ bridge_v2_type_to_connector_type(kafka) ->
 is_bridge_v2_type(kafka) -> true;
 is_bridge_v2_type(_) -> false.
 
-is_bridge_v2_resource_id(<<"bridge_v2:", _/binary>>) -> true;
-is_bridge_v2_resource_id(_) -> false.
+is_bridge_v2_id(<<"bridge_v2:", _/binary>>) -> true;
+is_bridge_v2_id(_) -> false.
 
 extract_connector_id_from_bridge_v2_id(Id) ->
     case binary:split(Id, <<":">>, [global]) of
@@ -423,3 +424,7 @@ perform_bridge_changes([#{action := Action, data := MapConfs} = Task | Tasks], R
         MapConfs
     ),
     perform_bridge_changes(Tasks, Result).
+
+is_bridge_v2_installed_in_connector_state(Tag, State) ->
+    BridgeV2s = maps:get(installed_bridge_v2s, State, #{}),
+    maps:is_key(Tag, BridgeV2s).

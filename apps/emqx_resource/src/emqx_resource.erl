@@ -108,9 +108,9 @@
     %% get the query mode of the resource
     query_mode/3,
     %% Install bridge 2 into a connector
-    call_maybe_install_bridge_v2/5,
+    call_install_bridge_v2/5,
     %% Deinstall bridge 2 from a connector
-    call_maybe_deinstall_bridge_v2/4
+    call_uninstall_bridge_v2/4
 ]).
 
 %% list all the instances, id only.
@@ -144,8 +144,8 @@
     on_batch_query_async/4,
     on_get_status/2,
     query_mode/1,
-    maybe_install_bridge_v2/4,
-    maybe_deinstall_bridge_v2/3
+    install_bridge_v2/4,
+    uninstall_bridge_v2/3
 ]).
 
 %% when calling emqx_resource:start/1
@@ -188,34 +188,32 @@
 
 -callback query_mode(Config :: term()) -> query_mode().
 
-%% This callback handles the installation of a given Bridge V2 into a connector.
+%% This callback handles the installation of a specified Bridge V2 resource.
 %%
-%% If the Bridge V2 is already installed, the function should return
-%% `{ok, ResourceState}`, where `ResourceState` is the input state. If not installed,
-%% it should attempt installation. Upon successful installation, it should return a new
-%% state with the state of the installed Bridge V2 encapsulated within the
-%% `installed_bridge_v2s` map.
+%% It's guaranteed that the provided Bridge V2 is not already installed when this
+%% function is invoked. Upon successful installation, the function should return a
+%% new state with the installed Bridge V2 encapsulated within the `installed_bridge_v2s` map.
 %%
 %% The Bridge V2 state must be stored in the `installed_bridge_v2s` map using the
-%% Bridge V2 ID (BridgeV2Id) as the key, as the caching mechanism depends on this structure.
+%% Bridge V2 resource ID as the key, as the caching mechanism depends on this structure.
 %%
-%% If the Bridge V2 cannot be successfully installed, the callback shall throw an exception.
--callback maybe_install_bridge_v2(
+%% If the Bridge V2 cannot be successfully installed, the callback shall
+%% throw an exception.
+-callback install_bridge_v2(
     ResId :: term(), ResourceState :: term(), BridgeV2Id :: binary(), Bridge2Config :: map()
 ) -> {ok, NewState :: #{installed_bridge_v2s := map()}}.
 
-%% This callback handles the deinstallation of a given Bridge V2 resource.
+%% This callback handles the deinstallation of a specified Bridge V2 resource.
 %%
-%% If the Bridge V2 is not present in the `ResourceState`, the function should
-%% simply return `{ok, ResourceState}`, where `ResourceState` is the input state.
-%% If the Bridge V2 is found, the callback should return a new
-%% state where the Bridge V2 ID key has been removed from the `installed_bridge_v2s` map.
+%% It's guaranteed that the provided Bridge V2 is installed when this
+%% function is invoked. Upon successful deinstallation, the function should return
+%% a new state where the Bridge V2 id key has been removed from the `installed_bridge_v2s` map.
 %%
-%% If the Bridge V2 cannot be successfully deinstalled the function shall log
-%% an error.
+%% If the Bridge V2 cannot be successfully deinstalled, the callback shall
+%% log an error.
 %%
-%% Also see the documentation for `maybe_install_bridge_v2/4`.
--callback maybe_deinstall_bridge_v2(
+%% Also see the documentation for `install_bridge_v2/4`.
+-callback uninstall_bridge_v2(
     ResId :: term(), ResourceState :: term(), BridgeV2Id :: binary()
 ) -> {ok, NewState :: term()}.
 
@@ -346,7 +344,7 @@ query(ResId, Request, Opts) ->
     end.
 
 get_query_mode_error(ResId, Opts) ->
-    case emqx_bridge_v2:is_bridge_v2_resource_id(ResId) of
+    case emqx_bridge_v2:is_bridge_v2_id(ResId) of
         true ->
             case Opts of
                 #{query_mode := QueryMode} ->
@@ -465,12 +463,12 @@ call_start(ResId, Mod, Config) ->
 call_health_check(ResId, Mod, ResourceState) ->
     ?SAFE_CALL(Mod:on_get_status(ResId, ResourceState)).
 
-call_maybe_install_bridge_v2(ResId, Mod, ResourceState, Bridge2Id, Bridge2Config) ->
+call_install_bridge_v2(ResId, Mod, ResourceState, Bridge2Id, Bridge2Config) ->
     %% Check if maybe_install_insert_template is exported
-    case erlang:function_exported(Mod, maybe_install_bridge_v2, 4) of
+    case erlang:function_exported(Mod, install_bridge_v2, 4) of
         true ->
             try
-                Mod:maybe_install_bridge_v2(
+                Mod:install_bridge_v2(
                     ResId, ResourceState, Bridge2Id, Bridge2Config
                 )
             of
@@ -491,16 +489,16 @@ call_maybe_install_bridge_v2(ResId, Mod, ResourceState, Bridge2Id, Bridge2Config
             end;
         false ->
             {error,
-                <<<<"maybe_install_bridge_v2 callback function not available for connector with resource id ">>/binary,
+                <<<<"install_bridge_v2 callback function not available for connector with resource id ">>/binary,
                     ResId/binary>>}
     end.
 
-call_maybe_deinstall_bridge_v2(ResId, Mod, ResourceState, Bridge2Id) ->
+call_uninstall_bridge_v2(ResId, Mod, ResourceState, Bridge2Id) ->
     %% Check if maybe_install_insert_template is exported
-    case erlang:function_exported(Mod, maybe_deinstall_bridge_v2, 3) of
+    case erlang:function_exported(Mod, uninstall_bridge_v2, 3) of
         true ->
             try
-                Mod:maybe_deinstall_bridge_v2(
+                Mod:uninstall_bridge_v2(
                     ResId, ResourceState, Bridge2Id
                 )
             catch
@@ -514,7 +512,7 @@ call_maybe_deinstall_bridge_v2(ResId, Mod, ResourceState, Bridge2Id) ->
             end;
         false ->
             {error,
-                <<<<"maybe_deinstall_bridge_v2 callback function not available for connector with resource id ">>/binary,
+                <<<<"uninstall_bridge_v2 callback function not available for connector with resource id ">>/binary,
                     ResId/binary>>}
     end.
 

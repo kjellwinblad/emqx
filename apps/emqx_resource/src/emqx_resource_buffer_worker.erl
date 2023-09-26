@@ -1053,6 +1053,31 @@ extract_connector_id(<<"bridge_v2:", _/binary>> = Id) ->
 extract_connector_id(Id) ->
     Id.
 
+pre_query_bridge_v2_check({Id, _} = _Request, State) ->
+    %% Check if bridge_v2 is installed in the connector state so that we
+    %% only call the connector if the bridge_v2 for the query is
+    %% installed. This guarantees that the the bridge_v2 for the query
+    %% is always installed when the connector is called which should
+    %% make the connector logic simpler.
+    case emqx_bridge_v2:is_bridge_v2_id(Id) of
+        true ->
+            case emqx_bridge_v2:is_bridge_v2_installed_in_connector_state(Id, State) of
+                true ->
+                    ok;
+                false ->
+                    erlang:error(
+                        {recoverable_error,
+                            iolist_to_binary(
+                                io_lib:format("bridge_v2:~p is not installed in its connector", [Id])
+                            )}
+                    )
+            end;
+        false ->
+            ok
+    end;
+pre_query_bridge_v2_check(_Request, _State) ->
+    ok.
+
 do_call_query(QM, Id, Index, Ref, Query, #{is_buffer_supported := true} = QueryOpts, Resource) ->
     %% The connector supports buffer, send even in disconnected state
     #{mod := Mod, state := ResSt, callback_mode := CBM} = Resource,
@@ -1100,7 +1125,12 @@ apply_query_fun(
     ?tp(call_query, #{id => Id, mod => Mod, query => _Query, res_st => ResSt, call_mode => sync}),
     maybe_reply_to(
         ?APPLY_RESOURCE(
-            call_query, Mod:on_query(extract_connector_id(Id), Request, ResSt), Request
+            call_query,
+            begin
+                pre_query_bridge_v2_check(Request, ResSt),
+                Mod:on_query(extract_connector_id(Id), Request, ResSt)
+            end,
+            Request
         ),
         QueryOpts
     );
@@ -1112,6 +1142,7 @@ apply_query_fun(async, Mod, Id, Index, Ref, ?QUERY(_, Request, _, _) = Query, Re
     ?APPLY_RESOURCE(
         call_query_async,
         begin
+            pre_query_bridge_v2_check(Request, ResSt),
             ReplyFun = fun ?MODULE:handle_async_reply/2,
             ReplyContext = #{
                 buffer_worker => self(),
@@ -1134,7 +1165,7 @@ apply_query_fun(async, Mod, Id, Index, Ref, ?QUERY(_, Request, _, _) = Query, Re
         Request
     );
 apply_query_fun(
-    sync, Mod, Id, _Index, _Ref, [?QUERY(_, _, _, _) | _] = Batch, ResSt, QueryOpts
+    sync, Mod, Id, _Index, _Ref, [?QUERY(_, FirstRequest, _, _) | _] = Batch, ResSt, QueryOpts
 ) ->
     ?tp(call_batch_query, #{
         id => Id, mod => Mod, batch => Batch, res_st => ResSt, call_mode => sync
@@ -1142,11 +1173,18 @@ apply_query_fun(
     Requests = lists:map(fun(?QUERY(_ReplyTo, Request, _, _ExpireAt)) -> Request end, Batch),
     maybe_reply_to(
         ?APPLY_RESOURCE(
-            call_batch_query, Mod:on_batch_query(extract_connector_id(Id), Requests, ResSt), Batch
+            call_batch_query,
+            begin
+                pre_query_bridge_v2_check(FirstRequest, ResSt),
+                Mod:on_batch_query(extract_connector_id(Id), Requests, ResSt)
+            end,
+            Batch
         ),
         QueryOpts
     );
-apply_query_fun(async, Mod, Id, Index, Ref, [?QUERY(_, _, _, _) | _] = Batch, ResSt, QueryOpts) ->
+apply_query_fun(
+    async, Mod, Id, Index, Ref, [?QUERY(_, FirstRequest, _, _) | _] = Batch, ResSt, QueryOpts
+) ->
     ?tp(call_batch_query_async, #{
         id => Id, mod => Mod, batch => Batch, res_st => ResSt, call_mode => async
     }),
@@ -1154,6 +1192,7 @@ apply_query_fun(async, Mod, Id, Index, Ref, [?QUERY(_, _, _, _) | _] = Batch, Re
     ?APPLY_RESOURCE(
         call_batch_query_async,
         begin
+            pre_query_bridge_v2_check(FirstRequest, ResSt),
             ReplyFun = fun ?MODULE:handle_async_batch_reply/2,
             ReplyContext = #{
                 buffer_worker => self(),
