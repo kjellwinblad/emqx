@@ -91,117 +91,6 @@ on_start(<<"connector:", _/binary>> = InstId, Config) ->
         hosts => Hosts,
         installed_bridge_v2s => #{}
     }}.
-%% @doc Config schema is defined in emqx_bridge_kafka.
-% on_start(InstId, Config) ->
-%     #{
-%         authentication := Auth,
-%         bootstrap_hosts := Hosts0,
-%         bridge_name := BridgeName,
-%         connect_timeout := ConnTimeout,
-%         kafka := KafkaConfig = #{
-%             message := MessageTemplate,
-%             topic := KafkaTopic,
-%             sync_query_timeout := SyncQueryTimeout
-%         },
-%         metadata_request_timeout := MetaReqTimeout,
-%         min_metadata_refresh_interval := MinMetaRefreshInterval,
-%         socket_opts := SocketOpts,
-%         ssl := SSL
-%     } = Config,
-%     KafkaHeadersTokens = preproc_kafka_headers(maps:get(kafka_headers, KafkaConfig, undefined)),
-%     KafkaExtHeadersTokens = preproc_ext_headers(maps:get(kafka_ext_headers, KafkaConfig, [])),
-%     KafkaHeadersValEncodeMode = maps:get(kafka_header_value_encode_mode, KafkaConfig, none),
-%     BridgeType = ?BRIDGE_TYPE,
-%     ResourceId = emqx_bridge_resource:resource_id(BridgeType, BridgeName),
-%     ok = emqx_resource:allocate_resource(InstId, ?kafka_telementry_id, ResourceId),
-%     _ = maybe_install_wolff_telemetry_handlers(ResourceId),
-%     Hosts = emqx_bridge_kafka_impl:hosts(Hosts0),
-%     ClientId = emqx_bridge_kafka_impl:make_client_id(InstId),
-%     ok = emqx_resource:allocate_resource(InstId, ?kafka_client_id, ClientId),
-%     ClientConfig = #{
-%         min_metadata_refresh_interval => MinMetaRefreshInterval,
-%         connect_timeout => ConnTimeout,
-%         client_id => ClientId,
-%         request_timeout => MetaReqTimeout,
-%         extra_sock_opts => emqx_bridge_kafka_impl:socket_opts(SocketOpts),
-%         sasl => emqx_bridge_kafka_impl:sasl(Auth),
-%         ssl => ssl(SSL)
-%     },
-%     case do_get_topic_status(Hosts, KafkaConfig, KafkaTopic) of
-%         unhealthy_target ->
-%             throw(unhealthy_target);
-%         _ ->
-%             ok
-%     end,
-%     case wolff:ensure_supervised_client(ClientId, Hosts, ClientConfig) of
-%         {ok, _} ->
-%             ?SLOG(info, #{
-%                 msg => "kafka_client_started",
-%                 instance_id => InstId,
-%                 kafka_hosts => Hosts
-%             });
-%         {error, Reason} ->
-%             ?SLOG(error, #{
-%                 msg => "failed_to_start_kafka_client",
-%                 instance_id => InstId,
-%                 kafka_hosts => Hosts,
-%                 reason => Reason
-%             }),
-%             throw(failed_to_start_kafka_client)
-%     end,
-%     %% Check if this is a dry run
-%     TestIdStart = string:find(InstId, ?TEST_ID_PREFIX),
-%     IsDryRun =
-%         case TestIdStart of
-%             nomatch ->
-%                 false;
-%             _ ->
-%                 string:equal(TestIdStart, InstId)
-%         end,
-%     WolffProducerConfig = producers_config(BridgeName, ClientId, KafkaConfig, IsDryRun),
-%     case wolff:ensure_supervised_producers(ClientId, KafkaTopic, WolffProducerConfig) of
-%         {ok, Producers} ->
-%             ok = emqx_resource:allocate_resource(InstId, ?kafka_producers, Producers),
-%             {ok, #{
-%                 message_template => compile_message_template(MessageTemplate),
-%                 client_id => ClientId,
-%                 kafka_topic => KafkaTopic,
-%                 producers => Producers,
-%                 resource_id => ResourceId,
-%                 sync_query_timeout => SyncQueryTimeout,
-%                 hosts => Hosts,
-%                 kafka_config => KafkaConfig,
-%                 headers_tokens => KafkaHeadersTokens,
-%                 ext_headers_tokens => KafkaExtHeadersTokens,
-%                 headers_val_encode_mode => KafkaHeadersValEncodeMode
-%             }};
-%         {error, Reason2} ->
-%             ?SLOG(error, #{
-%                 msg => "failed_to_start_kafka_producer",
-%                 instance_id => InstId,
-%                 kafka_hosts => Hosts,
-%                 kafka_topic => KafkaTopic,
-%                 reason => Reason2
-%             }),
-%             %% Need to stop the already running client; otherwise, the
-%             %% next `on_start' call will try to ensure the client
-%             %% exists and it will be already present and using the old
-%             %% config.  This is specially bad if the original crash
-%             %% was due to misconfiguration and we are trying to fix
-%             %% it...
-%             _ = with_log_at_error(
-%                 fun() -> wolff:stop_and_delete_supervised_client(ClientId) end,
-%                 #{
-%                     msg => "failed_to_delete_kafka_client",
-%                     client_id => ClientId
-%                 }
-%             ),
-
-%             throw(
-%                 "Failed to start Kafka client. Please check the logs for errors and check"
-%                 " the connection parameters."
-%             )
-%     end.
 
 install_bridge_v2(
     InstId,
@@ -276,20 +165,6 @@ create_producers_for_bridge_v2(
                 kafka_topic => KafkaTopic,
                 reason => Reason2
             }),
-            %% Need to stop the already running client; otherwise, the
-            %% next `on_start' call will try to ensure the client
-            %% exists and it will be already present and using the old
-            %% config.  This is specially bad if the original crash
-            %% was due to misconfiguration and we are trying to fix
-            %% it...
-            _ = with_log_at_error(
-                fun() -> wolff:stop_and_delete_supervised_client(ClientId) end,
-                #{
-                    msg => "failed_to_delete_kafka_client",
-                    client_id => ClientId
-                }
-            ),
-
             throw(
                 "Failed to start Kafka client. Please check the logs for errors and check"
                 " the connection parameters."
