@@ -216,7 +216,22 @@ config_key_path() ->
 pre_config_update([?ROOT_KEY], RawConf, RawConf) ->
     {ok, RawConf};
 pre_config_update([?ROOT_KEY], NewConf, _RawConf) ->
-    {ok, convert_certs(NewConf)}.
+    {ok, convert_certs(NewConf)};
+pre_config_update(_, {_Oper, _, _}, undefined) ->
+    {error, connector_not_found};
+pre_config_update(_, {Oper, _Type, _Name}, OldConfig) ->
+    %% to save the 'enable' to the config files
+    {ok, OldConfig#{<<"enable">> => operation_to_enable(Oper)}};
+pre_config_update(Path, Conf, _OldConfig) when is_map(Conf) ->
+    case emqx_connector_ssl:convert_certs(filename:join(Path), Conf) of
+        {error, Reason} ->
+            {error, Reason};
+        {ok, ConfNew} ->
+            {ok, ConfNew}
+    end.
+
+operation_to_enable(disable) -> false;
+operation_to_enable(enable) -> true.
 
 post_config_update([?ROOT_KEY], _Req, NewConf, OldConf, _AppEnv) ->
     #{added := Added, removed := Removed, changed := Updated} =
@@ -234,7 +249,26 @@ post_config_update([?ROOT_KEY], _Req, NewConf, OldConf, _AppEnv) ->
     % ok = unload_hook(),
     % ok = load_hook(NewConf),
     ?tp(connector_post_config_update_done, #{}),
-    Result.
+    Result;
+post_config_update([?ROOT_KEY, BridgeType, BridgeName], '$remove', _, _OldConf, _AppEnvs) ->
+    ok = emqx_connector_resource:remove(BridgeType, BridgeName),
+    Bridges = emqx_utils_maps:deep_remove([BridgeType, BridgeName], emqx:get_config([connectors])),
+    emqx_connector:reload_hook(Bridges),
+    ?tp(connector_post_config_update_done, #{}),
+    ok;
+post_config_update([?ROOT_KEY, BridgeType, BridgeName], _Req, NewConf, undefined, _AppEnvs) ->
+    ok = emqx_connector_resource:create(BridgeType, BridgeName, NewConf),
+    ?tp(connector_post_config_update_done, #{}),
+    ok;
+post_config_update([connectors, BridgeType, BridgeName], _Req, NewConf, OldConf, _AppEnvs) ->
+    ResOpts = emqx_resource:fetch_creation_opts(NewConf),
+    ok = emqx_connector_resource:update(BridgeType, BridgeName, {OldConf, NewConf}, ResOpts),
+    Bridges = emqx_utils_maps:deep_put(
+        [BridgeType, BridgeName], emqx:get_config([connectors]), NewConf
+    ),
+    emqx_connector:reload_hook(Bridges),
+    ?tp(connector_post_config_update_done, #{}),
+    ok.
 
 list() ->
     maps:fold(

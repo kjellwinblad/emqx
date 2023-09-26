@@ -192,6 +192,7 @@ transform_old_style_bridges_to_connector_and_actions(RawConfig) ->
         RawConfig,
         ConnectorFields
     ),
+    x:show(NewRawConf),
     NewRawConf.
 
 %%======================================================================================

@@ -3,9 +3,12 @@
 %%--------------------------------------------------------------------
 -module(emqx_connector_enterprise).
 
--export([resource_type/1, connector_impl_module/1]).
-
 -if(?EMQX_RELEASE_EDITION == ee).
+
+-export([
+    resource_type/1,
+    connector_impl_module/1
+]).
 
 -include_lib("hocon/include/hoconsc.hrl").
 -import(hoconsc, [mk/2, enum/1, ref/2]).
