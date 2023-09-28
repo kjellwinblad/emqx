@@ -34,7 +34,8 @@
     bridge_v2_type_to_connector_type/1,
     is_bridge_v2_id/1,
     extract_connector_id_from_bridge_v2_id/1,
-    is_bridge_v2_installed_in_connector_state/2
+    is_bridge_v2_installed_in_connector_state/2,
+    get_channels_for_connector/1
 ]).
 
 %% CRUD API
@@ -58,41 +59,64 @@
 
 -define(ROOT_KEY, bridges_v2).
 
+get_channels_for_connector(ConnectorId) ->
+    {ConnectorType, ConnectorName} = emqx_connector_resource:parse_connector_id(ConnectorId),
+    RootConf = maps:keys(emqx:get_config([?ROOT_KEY], #{})),
+    RelevantBridgeV2Types = [
+        Type
+     || Type <- RootConf,
+        bridge_v2_type_to_connector_type(Type) =:= ConnectorType
+    ],
+    lists:flatten([
+        get_channels_for_connector(ConnectorName, BridgeV2Type)
+     || BridgeV2Type <- RelevantBridgeV2Types
+    ]).
+
+get_channels_for_connector(ConnectorName, BridgeV2Type) ->
+    BridgeV2s = emqx:get_config([?ROOT_KEY, BridgeV2Type], #{}),
+    [
+        {id(BridgeV2Type, Name, ConnectorName), Conf}
+     || {Name, Conf} <- maps:to_list(BridgeV2s),
+        bin(ConnectorName) =:= maps:get(connector, Conf, no_name)
+    ].
+
 load() ->
-    Bridge_V2s = emqx:get_config([?ROOT_KEY], #{}),
-    lists:foreach(
-        fun({Type, NamedConf}) ->
-            lists:foreach(
-                fun({Name, Conf}) ->
-                    install_bridge_v2(
-                        Type,
-                        Name,
-                        Conf
-                    )
-                end,
-                maps:to_list(NamedConf)
-            )
-        end,
-        maps:to_list(Bridge_V2s)
-    ).
+    % Bridge_V2s = emqx:get_config([?ROOT_KEY], #{}),
+    % lists:foreach(
+    %     fun({Type, NamedConf}) ->
+    %         lists:foreach(
+    %             fun({Name, Conf}) ->
+    %                 install_bridge_v2(
+    %                     Type,
+    %                     Name,
+    %                     Conf
+    %                 )
+    %             end,
+    %             maps:to_list(NamedConf)
+    %         )
+    %     end,
+    %     maps:to_list(Bridge_V2s)
+    % ),
+    ok.
 
 unload() ->
-    Bridge_V2s = emqx:get_config([?ROOT_KEY], #{}),
-    lists:foreach(
-        fun({Type, NamedConf}) ->
-            lists:foreach(
-                fun({Name, Conf}) ->
-                    uninstall_bridge_v2(
-                        Type,
-                        Name,
-                        Conf
-                    )
-                end,
-                maps:to_list(NamedConf)
-            )
-        end,
-        maps:to_list(Bridge_V2s)
-    ).
+    % Bridge_V2s = emqx:get_config([?ROOT_KEY], #{}),
+    % lists:foreach(
+    %     fun({Type, NamedConf}) ->
+    %         lists:foreach(
+    %             fun({Name, Conf}) ->
+    %                 uninstall_bridge_v2(
+    %                     Type,
+    %                     Name,
+    %                     Conf
+    %                 )
+    %             end,
+    %             maps:to_list(NamedConf)
+    %         )
+    %     end,
+    %     maps:to_list(Bridge_V2s)
+    % ),
+    ok.
 
 install_bridge_v2(
     _BridgeType,
@@ -122,7 +146,13 @@ install_bridge_v2(
         _ ->
             %% start resource workers as the query type requires them
             ok = emqx_resource_buffer_worker_sup:start_workers(BridgeV2Id, CreationOpts)
-    end.
+    end,
+    %% If there is a running connector, we need to install the Bridge V2 in it
+    ConnectorId = emqx_connector_resource:resource_id(
+        bridge_v2_type_to_connector_type(BridgeV2Type), ConnectorName
+    ),
+    emqx_resource_manager:add_channel(ConnectorId, BridgeV2Id, Config),
+    ok.
 
 uninstall_bridge_v2(
     _BridgeType,
@@ -141,9 +171,10 @@ uninstall_bridge_v2(
     ok = emqx_resource_buffer_worker_sup:stop_workers(BridgeV2Id, CreationOpts),
     ok = emqx_resource:clear_metrics(BridgeV2Id),
     %% Deinstall from connector
-    ConnectorResourceId = extract_connector_id_from_bridge_v2_id(BridgeV2Id),
-    ok = emqx_resource_manager:maybe_uninstall_bridge_v2(ConnectorResourceId, BridgeV2Id),
-    ok.
+    ConnectorId = emqx_connector_resource:resource_id(
+        bridge_v2_type_to_connector_type(BridgeV2Type), ConnectorName
+    ),
+    emqx_resource_manager:remove_channel(ConnectorId, BridgeV2Id).
 
 get_query_mode(BridgeV2Type, Config) ->
     CreationOpts = emqx_resource:fetch_creation_opts(Config),
@@ -160,49 +191,51 @@ send_message(BridgeType, BridgeName, Message, QueryOpts0) ->
             Error
     end.
 
-do_send_msg_with_enabled_config(BridgeType, BridgeName, Message, QueryOpts0, Config) ->
-    BridgeV2Id = emqx_bridge_v2:id(BridgeType, BridgeName),
-    ConnectorResourceId = emqx_bridge_v2:extract_connector_id_from_bridge_v2_id(BridgeV2Id),
-    try emqx_resource_manager:maybe_install_bridge_v2(ConnectorResourceId, BridgeV2Id) of
-        ok ->
-            do_send_msg_after_bridge_v2_installed(
-                BridgeType,
-                BridgeName,
-                BridgeV2Id,
-                Message,
-                QueryOpts0,
-                Config
-            )
-    catch
-        Error:Reason:Stack ->
-            Msg = iolist_to_binary(
-                io_lib:format(
-                    "Failed to install bridge_v2 ~p in connector ~p: ~p",
-                    [BridgeV2Id, ConnectorResourceId, Reason]
-                )
-            ),
-            ?SLOG(error, #{
-                msg => Msg,
-                error => Error,
-                reason => Reason,
-                stacktrace => Stack
-            }),
-            {error, Reason}
-    end.
+% do_send_msg_with_enabled_config(BridgeType, BridgeName, Message, QueryOpts0, Config) ->
+%     BridgeV2Id = emqx_bridge_v2:id(BridgeType, BridgeName),
+%     ConnectorResourceId = emqx_bridge_v2:extract_connector_id_from_bridge_v2_id(BridgeV2Id),
+%     try
+%         case emqx_resource_manager:maybe_install_bridge_v2(ConnectorResourceId, BridgeV2Id) of
+%             ok ->
+%                 do_send_msg_after_bridge_v2_installed(
+%                   BridgeType,
+%                   BridgeName,
+%                   BridgeV2Id,
+%                   Message,
+%                   QueryOpts0,
+%                   Config
+%                  );
+%             InstallError ->
+%                 throw(InstallError)
+%         end
+%     catch
+%         Error:Reason:Stack ->
+%             Msg = iolist_to_binary(
+%                 io_lib:format(
+%                     "Failed to install bridge_v2 ~p in connector ~p: ~p",
+%                     [BridgeV2Id, ConnectorResourceId, Reason]
+%                 )
+%             ),
+%             ?SLOG(error, #{
+%                 msg => Msg,
+%                 error => Error,
+%                 reason => Reason,
+%                 stacktrace => Stack
+%             })
+%     end.
 
-do_send_msg_after_bridge_v2_installed(
-    BridgeType, BridgeName, BridgeV2Id, Message, QueryOpts0, Config
+do_send_msg_with_enabled_config(
+    BridgeType, BridgeName, Message, QueryOpts0, Config
 ) ->
-    case lookup(BridgeType, BridgeName) of
-        #{enable := true} = Config ->
-            QueryMode = get_query_mode(BridgeType, Config),
-            QueryOpts = maps:merge(emqx_bridge:query_opts(Config), QueryOpts0#{
-                query_mode => QueryMode
-            }),
-            emqx_resource:query(BridgeV2Id, {BridgeV2Id, Message}, QueryOpts);
-        #{enable := false} ->
-            {error, bridge_stopped}
-    end.
+    QueryMode = get_query_mode(BridgeType, Config),
+    QueryOpts = maps:merge(
+        emqx_bridge:query_opts(Config),
+        QueryOpts0#{
+            query_mode => QueryMode
+        }
+    ),
+    BridgeV2Id = emqx_bridge_v2:id(BridgeType, BridgeName),
+    emqx_resource:query(BridgeV2Id, {BridgeV2Id, Message}, QueryOpts).
 
 parse_id(Id) ->
     case binary:split(Id, <<":">>, [global]) of
@@ -425,6 +458,8 @@ perform_bridge_changes([#{action := Action, data := MapConfs} = Task | Tasks], R
     ),
     perform_bridge_changes(Tasks, Result).
 
-is_bridge_v2_installed_in_connector_state(Tag, State) ->
+is_bridge_v2_installed_in_connector_state(Tag, State) when is_map(State) ->
     BridgeV2s = maps:get(installed_bridge_v2s, State, #{}),
-    maps:is_key(Tag, BridgeV2s).
+    maps:is_key(Tag, BridgeV2s);
+is_bridge_v2_installed_in_connector_state(_Tag, _State) ->
+    false.

@@ -1048,47 +1048,86 @@ call_query(QM, Id, Index, Ref, Query, QueryOpts) ->
             ?RESOURCE_ERROR(not_found, "resource not found")
     end.
 
-extract_connector_id(<<"bridge_v2:", _/binary>> = Id) ->
-    emqx_bridge_v2:extract_connector_id_from_bridge_v2_id(Id);
+extract_connector_id(Id) when is_binary(Id) ->
+    case binary:split(Id, <<":">>, [global]) of
+        [
+            _ChannelGlobalType,
+            _ChannelSubType,
+            _ChannelName,
+            <<"connector">>,
+            ConnectorType,
+            ConnectorName
+        ] ->
+            <<"connector:", ConnectorType/binary, ":", ConnectorName/binary>>;
+        _ ->
+            Id
+    end;
 extract_connector_id(Id) ->
     Id.
 
-pre_query_bridge_v2_check({Id, _} = _Request, State) ->
-    %% Check if bridge_v2 is installed in the connector state so that we
-    %% only call the connector if the bridge_v2 for the query is
-    %% installed. This guarantees that the the bridge_v2 for the query
-    %% is always installed when the connector is called which should
-    %% make the connector logic simpler.
-    case emqx_bridge_v2:is_bridge_v2_id(Id) of
+is_channel_id(Id) ->
+    extract_connector_id(Id) =/= Id.
+
+%% Check if channel is installed in the connector state so that we
+%% can add it if it's not installed. We will fail with a recoverable error if
+%% the installation fails so that the query can be retried.
+pre_query_channel_check({Id, _} = _Request, State, Channels, _Mod) when is_map_key(Id, Channels) ->
+    State;
+pre_query_channel_check({Id, _} = _Request, State, _Channels, Mod) ->
+    case is_channel_id(Id) of
         true ->
-            case emqx_bridge_v2:is_bridge_v2_installed_in_connector_state(Id, State) of
-                true ->
-                    ok;
-                false ->
-                    erlang:error(
-                        {recoverable_error,
-                            iolist_to_binary(
-                                io_lib:format("bridge_v2:~p is not installed in its connector", [Id])
-                            )}
-                    )
+            ResId = extract_connector_id(Id),
+            case emqx_resource:call_get_channel_config(ResId, Id, Mod) of
+                ChannelConfig when is_map(ChannelConfig) ->
+                    add_channel(ResId, Id, ChannelConfig);
+                Error ->
+                    %% Broken reference: this should not happen
+                    erlang:error({unrecoverable_error, Error})
             end;
         false ->
-            ok
+            State
     end;
-pre_query_bridge_v2_check(_Request, _State) ->
-    ok.
+pre_query_channel_check(_Request, State, _Channels, _Mod) ->
+    State.
+
+add_channel(ResId, ChannelId, ChannelConfig) ->
+    case emqx_resource_manager:add_channel(ResId, ChannelId, ChannelConfig) of
+        ok ->
+            read_new_state_from_resource_cache(ResId);
+        {error, Reason} ->
+            erlang:error(
+                {recoverable_error,
+                    iolist_to_binary(
+                        io_lib:format("channel:~p could not be installed in its connector: (~p)", [
+                            ChannelId, Reason
+                        ])
+                    )}
+            )
+    end.
+
+read_new_state_from_resource_cache(ResId) ->
+    case emqx_resource_manager:lookup_cached(ResId) of
+        {ok, _Group, #{status := stopped}} ->
+            error({recoverable_error, <<"resource stopped or disabled">>});
+        {ok, _Group, #{status := connecting, error := unhealthy_target}} ->
+            error({unrecoverable_error, unhealthy_target});
+        {ok, _Group, #{state := State}} ->
+            State;
+        {error, not_found} ->
+            error({recoverable_error, <<"resource not found">>})
+    end.
 
 do_call_query(QM, Id, Index, Ref, Query, #{is_buffer_supported := true} = QueryOpts, Resource) ->
     %% The connector supports buffer, send even in disconnected state
-    #{mod := Mod, state := ResSt, callback_mode := CBM} = Resource,
+    #{mod := Mod, state := ResSt, callback_mode := CBM, added_channels := Channels} = Resource,
     CallMode = call_mode(QM, CBM),
-    apply_query_fun(CallMode, Mod, Id, Index, Ref, Query, ResSt, QueryOpts);
+    apply_query_fun(CallMode, Mod, Id, Index, Ref, Query, ResSt, Channels, QueryOpts);
 do_call_query(QM, Id, Index, Ref, Query, QueryOpts, #{status := connected} = Resource) ->
     %% when calling from the buffer worker or other simple queries,
     %% only apply the query fun when it's at connected status
-    #{mod := Mod, state := ResSt, callback_mode := CBM} = Resource,
+    #{mod := Mod, state := ResSt, callback_mode := CBM, added_channels := Channels} = Resource,
     CallMode = call_mode(QM, CBM),
-    apply_query_fun(CallMode, Mod, Id, Index, Ref, Query, ResSt, QueryOpts);
+    apply_query_fun(CallMode, Mod, Id, Index, Ref, Query, ResSt, Channels, QueryOpts);
 do_call_query(_QM, _Id, _Index, _Ref, _Query, _QueryOpts, _Data) ->
     ?RESOURCE_ERROR(not_connected, "resource not connected").
 
@@ -1120,21 +1159,23 @@ do_call_query(_QM, _Id, _Index, _Ref, _Query, _QueryOpts, _Data) ->
 ).
 
 apply_query_fun(
-    sync, Mod, Id, _Index, _Ref, ?QUERY(_, Request, _, _) = _Query, ResSt, QueryOpts
+    sync, Mod, Id, _Index, _Ref, ?QUERY(_, Request, _, _) = _Query, ResSt, Channels, QueryOpts
 ) ->
     ?tp(call_query, #{id => Id, mod => Mod, query => _Query, res_st => ResSt, call_mode => sync}),
     maybe_reply_to(
         ?APPLY_RESOURCE(
             call_query,
             begin
-                pre_query_bridge_v2_check(Request, ResSt),
-                Mod:on_query(extract_connector_id(Id), Request, ResSt)
+                NewResSt = pre_query_channel_check(Request, ResSt, Channels, Mod),
+                Mod:on_query(extract_connector_id(Id), Request, NewResSt)
             end,
             Request
         ),
         QueryOpts
     );
-apply_query_fun(async, Mod, Id, Index, Ref, ?QUERY(_, Request, _, _) = Query, ResSt, QueryOpts) ->
+apply_query_fun(
+    async, Mod, Id, Index, Ref, ?QUERY(_, Request, _, _) = Query, ResSt, Channels, QueryOpts
+) ->
     ?tp(call_query_async, #{
         id => Id, mod => Mod, query => Query, res_st => ResSt, call_mode => async
     }),
@@ -1142,7 +1183,6 @@ apply_query_fun(async, Mod, Id, Index, Ref, ?QUERY(_, Request, _, _) = Query, Re
     ?APPLY_RESOURCE(
         call_query_async,
         begin
-            pre_query_bridge_v2_check(Request, ResSt),
             ReplyFun = fun ?MODULE:handle_async_reply/2,
             ReplyContext = #{
                 buffer_worker => self(),
@@ -1157,15 +1197,24 @@ apply_query_fun(async, Mod, Id, Index, Ref, ?QUERY(_, Request, _, _) = Query, Re
             AsyncWorkerMRef = undefined,
             InflightItem = ?INFLIGHT_ITEM(Ref, Query, IsRetriable, AsyncWorkerMRef),
             ok = inflight_append(InflightTID, InflightItem),
+            NewResSt = pre_query_channel_check(Request, ResSt, Channels, Mod),
             Result = Mod:on_query_async(
-                extract_connector_id(Id), Request, {ReplyFun, [ReplyContext]}, ResSt
+                extract_connector_id(Id), Request, {ReplyFun, [ReplyContext]}, NewResSt
             ),
             {async_return, Result}
         end,
         Request
     );
 apply_query_fun(
-    sync, Mod, Id, _Index, _Ref, [?QUERY(_, FirstRequest, _, _) | _] = Batch, ResSt, QueryOpts
+    sync,
+    Mod,
+    Id,
+    _Index,
+    _Ref,
+    [?QUERY(_, FirstRequest, _, _) | _] = Batch,
+    ResSt,
+    Channels,
+    QueryOpts
 ) ->
     ?tp(call_batch_query, #{
         id => Id, mod => Mod, batch => Batch, res_st => ResSt, call_mode => sync
@@ -1175,15 +1224,23 @@ apply_query_fun(
         ?APPLY_RESOURCE(
             call_batch_query,
             begin
-                pre_query_bridge_v2_check(FirstRequest, ResSt),
-                Mod:on_batch_query(extract_connector_id(Id), Requests, ResSt)
+                NewResSt = pre_query_channel_check(FirstRequest, ResSt, Channels, Mod),
+                Mod:on_batch_query(extract_connector_id(Id), Requests, NewResSt)
             end,
             Batch
         ),
         QueryOpts
     );
 apply_query_fun(
-    async, Mod, Id, Index, Ref, [?QUERY(_, FirstRequest, _, _) | _] = Batch, ResSt, QueryOpts
+    async,
+    Mod,
+    Id,
+    Index,
+    Ref,
+    [?QUERY(_, FirstRequest, _, _) | _] = Batch,
+    ResSt,
+    Channels,
+    QueryOpts
 ) ->
     ?tp(call_batch_query_async, #{
         id => Id, mod => Mod, batch => Batch, res_st => ResSt, call_mode => async
@@ -1192,7 +1249,6 @@ apply_query_fun(
     ?APPLY_RESOURCE(
         call_batch_query_async,
         begin
-            pre_query_bridge_v2_check(FirstRequest, ResSt),
             ReplyFun = fun ?MODULE:handle_async_batch_reply/2,
             ReplyContext = #{
                 buffer_worker => self(),
@@ -1210,8 +1266,9 @@ apply_query_fun(
             AsyncWorkerMRef = undefined,
             InflightItem = ?INFLIGHT_ITEM(Ref, Batch, IsRetriable, AsyncWorkerMRef),
             ok = inflight_append(InflightTID, InflightItem),
+            NewResSt = pre_query_channel_check(FirstRequest, ResSt, Channels, Mod),
             Result = Mod:on_batch_query_async(
-                extract_connector_id(Id), Requests, {ReplyFun, [ReplyContext]}, ResSt
+                extract_connector_id(Id), Requests, {ReplyFun, [ReplyContext]}, NewResSt
             ),
             {async_return, Result}
         end,

@@ -30,8 +30,8 @@
     start/2,
     stop/1,
     health_check/1,
-    maybe_install_bridge_v2/2,
-    maybe_uninstall_bridge_v2/2
+    add_channel/3,
+    remove_channel/2
 ]).
 
 -export([
@@ -66,7 +66,8 @@
     state,
     error,
     pid,
-    extra
+    extra,
+    added_channels
 }).
 -type data() :: #data{}.
 
@@ -274,35 +275,19 @@ list_group(Group) ->
 health_check(ResId) ->
     safe_call(ResId, health_check, ?T_OPERATION).
 
-maybe_install_bridge_v2(ResId, Bridge2Id) ->
+add_channel(ResId, ChannelId, Config) ->
     %% Use cache to avoid doing inter process communication on every call
-    ResourceData = read_cache(ResId),
-    do_maybe_install_bridge_v2_with_cached_data(
-        ResId,
-        Bridge2Id,
-        ResourceData#data.status,
-        ResourceData#data.state
-    ).
+    Data = read_cache(ResId),
+    AddedChannels = Data#data.added_channels,
+    case maps:get(ChannelId, AddedChannels, false) of
+        true ->
+            ok;
+        false ->
+            safe_call(ResId, {add_channel, ChannelId, Config}, ?T_OPERATION)
+    end.
 
-do_maybe_install_bridge_v2_with_cached_data(
-    _ResId,
-    BridgeV2Id,
-    connected,
-    #{installed_bridge_v2s := InstalledBridgeV2s}
-) when
-    is_map_key(BridgeV2Id, InstalledBridgeV2s)
-->
-    ok;
-do_maybe_install_bridge_v2_with_cached_data(
-    ResId,
-    BridgeV2Id,
-    _Status,
-    _State
-) ->
-    safe_call(ResId, {maybe_install_bridge_v2, BridgeV2Id}, ?T_OPERATION).
-
-maybe_uninstall_bridge_v2(ResId, Bridge2Id) ->
-    safe_call(ResId, {maybe_uninstall_bridge_v2, Bridge2Id}, ?T_OPERATION).
+remove_channel(ResId, ChannelId) ->
+    safe_call(ResId, {remove_channel, ChannelId}, ?T_OPERATION).
 
 %% Server start/stop callbacks
 
@@ -322,7 +307,8 @@ start_link(ResId, Group, ResourceType, Config, Opts) ->
         config = Config,
         opts = Opts,
         state = undefined,
-        error = undefined
+        error = undefined,
+        added_channels = #{}
     },
     gen_statem:start_link(?REF(ResId), ?MODULE, {Data, Opts}, []).
 
@@ -421,13 +407,13 @@ handle_event(enter, _OldState, stopped = State, Data) ->
     {keep_state_and_data, []};
 % Ignore all other events
 handle_event(
-    {call, From}, {maybe_install_bridge_v2, Bridge2Id}, _State, Data
+    {call, From}, {add_channel, ChannelId, Config}, _State, Data
 ) ->
-    handle_maybe_install_bridge_v2(From, Bridge2Id, Data);
+    handle_add_channel(From, Data, ChannelId, Config);
 handle_event(
-    {call, From}, {maybe_uninstall_bridge_v2, Bridge2Id}, _State, Data
+    {call, From}, {remove_channel, ChannelId}, _State, Data
 ) ->
-    handle_maybe_uninstall_bridge_v2(From, Bridge2Id, Data);
+    handle_remove_channel(From, ChannelId, Data);
 handle_event(EventType, EventData, State, Data) ->
     ?SLOG(
         error,
@@ -503,10 +489,11 @@ start_resource(Data, From) ->
     %% in case the emqx_resource:call_start/2 hangs, the lookup/1 can read status from the cache
     case emqx_resource:call_start(Data#data.id, Data#data.mod, Data#data.config) of
         {ok, ResourceState} ->
-            UpdatedData = Data#data{status = connecting, state = ResourceState},
+            UpdatedData1 = Data#data{status = connecting, state = ResourceState},
             %% Perform an initial health_check immediately before transitioning into a connected state
+            UpdatedData2 = add_channels(UpdatedData1),
             Actions = maybe_reply([{state_timeout, 0, health_check}], From, ok),
-            {next_state, connecting, update_state(UpdatedData, Data), Actions};
+            {next_state, connecting, update_state(UpdatedData2, Data), Actions};
         {error, Reason} = Err ->
             ?SLOG(warning, #{
                 msg => start_resource_failed,
@@ -521,6 +508,36 @@ start_resource(Data, From) ->
             {next_state, disconnected, update_state(UpdatedData, Data), Actions}
     end.
 
+add_channels(Data) ->
+    ChannelIDConfigTuples = emqx_resource:call_get_channels(Data#data.id, Data#data.mod),
+    add_channels_in_list(ChannelIDConfigTuples, Data).
+
+add_channels_in_list([], Data) ->
+    Data;
+add_channels_in_list([{ChannelID, ChannelConfig} | Rest], Data) ->
+    case
+        emqx_resource:call_add_channel(
+            Data#data.id, Data#data.mod, Data#data.state, ChannelID, ChannelConfig
+        )
+    of
+        {ok, NewState} ->
+            AddedChannelsMap = Data#data.added_channels,
+            NewAddedChannelsMap = maps:put(ChannelID, true, AddedChannelsMap),
+            NewData = Data#data{
+                state = NewState,
+                added_channels = NewAddedChannelsMap
+            },
+            add_channels_in_list(Rest, NewData);
+        {error, Reason} ->
+            ?SLOG(warning, #{
+                msg => add_channel_failed,
+                id => Data#data.id,
+                channel_id => ChannelID,
+                reason => Reason
+            }),
+            add_channels_in_list(Rest, Data)
+    end.
+
 maybe_stop_resource(#data{status = Status} = Data) when Status /= stopped ->
     stop_resource(Data);
 maybe_stop_resource(#data{status = stopped} = Data) ->
@@ -533,8 +550,10 @@ stop_resource(#data{state = ResState, id = ResId} = Data) ->
     HasAllocatedResources = emqx_resource:has_allocated_resources(ResId),
     case ResState =/= undefined orelse HasAllocatedResources of
         true ->
+            %% Before stop is called we remove all the channels from the resource
+            NewData = remove_channels(Data),
             %% we clear the allocated resources after stop is successful
-            emqx_resource:call_stop(Data#data.id, Data#data.mod, ResState);
+            emqx_resource:call_stop(NewData#data.id, NewData#data.mod, ResState);
         false ->
             ok
     end,
@@ -542,66 +561,111 @@ stop_resource(#data{state = ResState, id = ResId} = Data) ->
     ok = emqx_metrics_worker:reset_metrics(?RES_METRICS, ResId),
     Data#data{status = stopped}.
 
+remove_channels(Data) ->
+    Channels = maps:keys(Data#data.added_channels),
+    remove_channels_in_list(Channels, Data).
+
+remove_channels_in_list([], Data) ->
+    Data;
+remove_channels_in_list([ChannelID | Rest], Data) ->
+    case
+        emqx_resource:call_remove_channel(Data#data.id, Data#data.mod, Data#data.state, ChannelID)
+    of
+        {ok, NewState} ->
+            AddedChannelsMap = Data#data.added_channels,
+            NewAddedChannelsMap = maps:remove(ChannelID, AddedChannelsMap),
+            NewData = Data#data{
+                state = NewState,
+                added_channels = NewAddedChannelsMap
+            },
+            remove_channels_in_list(Rest, NewData);
+        {error, Reason} ->
+            ?SLOG(warning, #{
+                msg => add_channel_failed,
+                id => Data#data.id,
+                channel_id => ChannelID,
+                reason => Reason
+            }),
+            remove_channels_in_list(Rest, Data)
+    end.
+
 make_test_id() ->
     RandId = iolist_to_binary(emqx_utils:gen_id(16)),
     <<?TEST_ID_PREFIX, RandId/binary>>.
 
-handle_maybe_install_bridge_v2(From, BridgeV2Id, Data) ->
-    case emqx_bridge_v2:is_bridge_v2_installed_in_connector_state(BridgeV2Id, Data#data.state) of
+handle_add_channel(From, Data, ChannelId, ChannelConfig) ->
+    Channels = Data#data.added_channels,
+    case maps:get(ChannelId, Channels, false) of
         true ->
-            %% The bridge_v2 is already installed in the connector state
+            %% The channel is already installed in the connector state
             %% We don't need to install it again
             {keep_state_and_data, [{reply, From, ok}]};
         false ->
-            %% The bridge_v2 is not installed in the connector state
+            %% The channel is not installed in the connector state
             %% We need to install it
-            handle_maybe_install_bridge_v2_need_insert(From, BridgeV2Id, Data)
+            handle_add_channel_need_insert(From, Data, ChannelId, Data, ChannelConfig)
     end.
 
-handle_maybe_install_bridge_v2_need_insert(From, Bridge2Id, Data) ->
-    %% Look up the bridge2 config
-    case emqx_bridge_v2:lookup(Bridge2Id) of
-        {error, _Msg} = Error ->
-            {keep_state_and_data, [{reply, From, Error}]};
-        Bridge2Config ->
-            handle_maybe_install_bridge_v2_with_config(From, Bridge2Id, Data, Bridge2Config)
-    end.
-
-handle_maybe_install_bridge_v2_with_config(From, Bridge2Id, Data, Bridge2Config) ->
+handle_add_channel_need_insert(From, Data, ChannelId, Data, ChannelConfig) ->
     case
-        emqx_resource:call_install_bridge_v2(
-            Data#data.id, Data#data.mod, Data#data.state, Bridge2Id, Bridge2Config
+        emqx_resource:call_add_channel(
+            Data#data.id, Data#data.mod, Data#data.state, ChannelId, ChannelConfig
         )
     of
         {ok, NewState} ->
-            UpdatedData = Data#data{state = NewState},
+            AddedChannelsMap = Data#data.added_channels,
+            NewAddedChannelsMap = maps:put(ChannelId, true, AddedChannelsMap),
+            UpdatedData = Data#data{
+                state = NewState,
+                added_channels = NewAddedChannelsMap
+            },
             update_state(UpdatedData, Data),
             {keep_state, UpdatedData, [{reply, From, ok}]};
-        Error ->
+        {error, Reason} = Error ->
+            %% Log the error as a warning
+            ?SLOG(warning, #{
+                msg => add_channel_failed,
+                id => Data#data.id,
+                channel_id => ChannelId,
+                reason => Reason
+            }),
             {keep_state_and_data, [{reply, From, Error}]}
     end.
 
-handle_maybe_uninstall_bridge_v2(From, BridgeV2Id, Data) ->
-    case emqx_bridge_v2:is_bridge_v2_installed_in_connector_state(BridgeV2Id, Data#data.state) of
+handle_remove_channel(From, ChannelId, Data) ->
+    Channels = Data#data.added_channels,
+    case maps:get(ChannelId, Channels, false) of
         false ->
-            %% The bridge_v2 is already not installed in the connector state
+            %% The channel is already not installed in the connector state
             {keep_state_and_data, [{reply, From, ok}]};
         true ->
-            %% The bridge_v2 is installed in the connector state
-            handle_maybe_uninstall_bridge_v2_exists(From, BridgeV2Id, Data)
+            %% The channel is installed in the connector state
+            handle_remove_channel_exists(From, ChannelId, Data)
     end.
 
-handle_maybe_uninstall_bridge_v2_exists(From, BridgeV2Id, Data) ->
+handle_remove_channel_exists(From, ChannelId, Data) ->
     case
-        emqx_resource:call_uninstall_bridge_v2(
-            Data#data.id, Data#data.mod, Data#data.state, BridgeV2Id
+        emqx_resource:call_remove_channel(
+            Data#data.id, Data#data.mod, Data#data.state, ChannelId
         )
     of
         {ok, NewState} ->
-            UpdatedData = Data#data{state = NewState},
+            AddedChannelsMap = Data#data.added_channels,
+            NewAddedChannelsMap = maps:remove(ChannelId, AddedChannelsMap),
+            UpdatedData = Data#data{
+                state = NewState,
+                added_channels = NewAddedChannelsMap
+            },
             update_state(UpdatedData, Data),
             {keep_state, UpdatedData, [{reply, From, ok}]};
-        Error ->
+        {error, Reason} = Error ->
+            %% Log the error as a warning
+            ?SLOG(warning, #{
+                msg => remove_channel_failed,
+                id => Data#data.id,
+                channel_id => ChannelId,
+                reason => Reason
+            }),
             {keep_state_and_data, [{reply, From, Error}]}
     end.
 
@@ -742,7 +806,8 @@ data_record_to_external_map(Data) ->
         query_mode => Data#data.query_mode,
         config => Data#data.config,
         status => Data#data.status,
-        state => Data#data.state
+        state => Data#data.state,
+        added_channels => Data#data.added_channels
     }.
 
 -spec wait_for_ready(resource_id(), integer()) -> ok | timeout | {error, term()}.

@@ -107,10 +107,14 @@
     call_stop/3,
     %% get the query mode of the resource
     query_mode/3,
-    %% Install bridge 2 into a connector
-    call_install_bridge_v2/5,
-    %% Deinstall bridge 2 from a connector
-    call_uninstall_bridge_v2/4
+    %% Add channel to resource
+    call_add_channel/5,
+    %% Remove channel from resource
+    call_remove_channel/4,
+    %% Get channels from resource
+    call_get_channels/2,
+    %% Get channel config from resource
+    call_get_channel_config/3
 ]).
 
 %% list all the instances, id only.
@@ -143,9 +147,10 @@
     on_query_async/4,
     on_batch_query_async/4,
     on_get_status/2,
-    query_mode/1,
-    install_bridge_v2/4,
-    uninstall_bridge_v2/3
+    on_add_channel/4,
+    on_remove_channel/3,
+    on_get_channels/1,
+    query_mode/1
 ]).
 
 %% when calling emqx_resource:start/1
@@ -199,8 +204,8 @@
 %%
 %% If the Bridge V2 cannot be successfully installed, the callback shall
 %% throw an exception.
--callback install_bridge_v2(
-    ResId :: term(), ResourceState :: term(), BridgeV2Id :: binary(), Bridge2Config :: map()
+-callback on_add_channel(
+    ResId :: term(), ResourceState :: term(), BridgeV2Id :: binary(), ChannelConfig :: map()
 ) -> {ok, NewState :: #{installed_bridge_v2s := map()}}.
 
 %% This callback handles the deinstallation of a specified Bridge V2 resource.
@@ -212,9 +217,13 @@
 %% If the Bridge V2 cannot be successfully deinstalled, the callback shall
 %% log an error.
 %%
-%% Also see the documentation for `install_bridge_v2/4`.
--callback uninstall_bridge_v2(
+%% Also see the documentation for `on_add_channel/4`.
+-callback on_remove_channel(
     ResId :: term(), ResourceState :: term(), BridgeV2Id :: binary()
+) -> {ok, NewState :: term()}.
+
+-callback on_get_channels(
+    ResId :: term()
 ) -> {ok, NewState :: term()}.
 
 -spec list_types() -> [module()].
@@ -463,57 +472,75 @@ call_start(ResId, Mod, Config) ->
 call_health_check(ResId, Mod, ResourceState) ->
     ?SAFE_CALL(Mod:on_get_status(ResId, ResourceState)).
 
-call_install_bridge_v2(ResId, Mod, ResourceState, Bridge2Id, Bridge2Config) ->
+call_add_channel(ResId, Mod, ResourceState, ChannelId, ChannelConfig) ->
     %% Check if maybe_install_insert_template is exported
-    case erlang:function_exported(Mod, install_bridge_v2, 4) of
+    case erlang:function_exported(Mod, on_add_channel, 4) of
         true ->
             try
-                Mod:install_bridge_v2(
-                    ResId, ResourceState, Bridge2Id, Bridge2Config
+                Mod:on_add_channel(
+                    ResId, ResourceState, ChannelId, ChannelConfig
                 )
-            of
-                {ok, NewResourceState} ->
-                    {ok, NewResourceState};
-                {error, Reason} ->
-                    {error, Reason}
             catch
                 throw:Error ->
                     {error, Error};
                 Kind:Reason:Stacktrace ->
-                    ?SLOG(error, #{
+                    {error, #{
                         exception => Kind,
                         reason => Reason,
                         stacktrace => emqx_utils:redact(Stacktrace)
-                    }),
-                    {error, Reason}
+                    }}
             end;
         false ->
             {error,
-                <<<<"install_bridge_v2 callback function not available for connector with resource id ">>/binary,
+                <<<<"on_add_channel callback function not available for connector with resource id ">>/binary,
                     ResId/binary>>}
     end.
 
-call_uninstall_bridge_v2(ResId, Mod, ResourceState, Bridge2Id) ->
+call_remove_channel(ResId, Mod, ResourceState, ChannelId) ->
     %% Check if maybe_install_insert_template is exported
-    case erlang:function_exported(Mod, uninstall_bridge_v2, 3) of
+    case erlang:function_exported(Mod, on_remove_channel, 3) of
         true ->
             try
-                Mod:uninstall_bridge_v2(
-                    ResId, ResourceState, Bridge2Id
+                Mod:on_remove_channel(
+                    ResId, ResourceState, ChannelId
                 )
             catch
                 Kind:Reason:Stacktrace ->
-                    ?SLOG(error, #{
+                    {error, #{
                         exception => Kind,
                         reason => Reason,
                         stacktrace => emqx_utils:redact(Stacktrace)
-                    }),
-                    {error, Reason}
+                    }}
             end;
         false ->
             {error,
-                <<<<"uninstall_bridge_v2 callback function not available for connector with resource id ">>/binary,
+                <<<<"on_remove_channel callback function not available for connector with resource id ">>/binary,
                     ResId/binary>>}
+    end.
+
+call_get_channels(ResId, Mod) ->
+    case erlang:function_exported(Mod, on_get_channels, 1) of
+        true ->
+            Mod:on_get_channels(ResId);
+        false ->
+            []
+    end.
+
+call_get_channel_config(ResId, ChannelId, Mod) ->
+    case erlang:function_exported(Mod, on_get_channels, 1) of
+        true ->
+            ChConfigs = Mod:on_get_channels(ResId),
+            case [Conf || {ChId, Conf} <- ChConfigs, ChId =:= ChannelId] of
+                [ChannelConf] ->
+                    ChannelConf;
+                _ ->
+                    {error,
+                        <<"Channel ", ChannelId/binary,
+                            "not found. There seems to be a broken reference">>}
+            end;
+        false ->
+            {error,
+                <<"on_get_channels callback function not available for resource id", ResId/binary>>}
     end.
 
 -spec call_stop(resource_id(), module(), resource_state()) -> term().

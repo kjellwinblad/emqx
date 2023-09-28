@@ -95,9 +95,12 @@ parse_connector_id(ConnectorId, Opts) ->
     case string:split(bin(ConnectorId), ":", all) of
         [Type, Name] ->
             {to_type_atom(Type), validate_name(Name, Opts)};
+        [<<"connector">>, Type, Name] ->
+            {to_type_atom(Type), validate_name(Name, Opts)};
         _ ->
             invalid_data(
-                <<"should be of pattern {type}:{name}, but got ", ConnectorId/binary>>
+                <<"should be of pattern {type}:{name} or connector:{type}:{name}, but got ",
+                    ConnectorId/binary>>
             )
     end.
 
