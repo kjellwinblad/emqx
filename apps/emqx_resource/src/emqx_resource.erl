@@ -67,7 +67,7 @@
 ]).
 
 %% Calls to the callback module with current resource state
-%% They also save the state after the call finished (except query/2,3).
+%% They also save the state after the call finished (except call_get_channel_config/3).
 
 -export([
     start/1,
@@ -76,6 +76,7 @@
     restart/2,
     %% verify if the resource is working normally
     health_check/1,
+    channel_health_check/2,
     %% set resource status to disconnected
     set_resource_status_connecting/1,
     %% stop the instance
@@ -91,7 +92,9 @@
     has_allocated_resources/1,
     get_allocated_resources/1,
     get_allocated_resources_list/1,
-    forget_allocated_resources/1
+    forget_allocated_resources/1,
+    %% Get channel config from resource
+    call_get_channel_config/3
 ]).
 
 %% Direct calls to the callback module
@@ -103,6 +106,8 @@
     call_start/3,
     %% verify if the resource is working normally
     call_health_check/3,
+    %% verify if the resource channel is working normally
+    call_channel_health_check/4,
     %% stop the instance
     call_stop/3,
     %% get the query mode of the resource
@@ -112,9 +117,7 @@
     %% Remove channel from resource
     call_remove_channel/4,
     %% Get channels from resource
-    call_get_channels/2,
-    %% Get channel config from resource
-    call_get_channel_config/3
+    call_get_channels/2
 ]).
 
 %% list all the instances, id only.
@@ -137,6 +140,7 @@
 -export_type([
     query_mode/0,
     resource_id/0,
+    channel_id/0,
     resource_data/0,
     resource_status/0
 ]).
@@ -147,6 +151,7 @@
     on_query_async/4,
     on_batch_query_async/4,
     on_get_status/2,
+    on_get_channel_status/3,
     on_add_channel/4,
     on_remove_channel/3,
     on_get_channels/1,
@@ -190,6 +195,10 @@
     resource_status()
     | {resource_status(), resource_state()}
     | {resource_status(), resource_state(), term()}.
+
+-callback on_get_channel_status(resource_id(), channel_id(), resource_state()) ->
+    resource_status()
+    | {resource_status(), term()}.
 
 -callback query_mode(Config :: term()) -> query_mode().
 
@@ -398,6 +407,11 @@ stop(ResId) ->
 health_check(ResId) ->
     emqx_resource_manager:health_check(ResId).
 
+-spec channel_health_check(resource_id(), channel_id()) ->
+    {ok, resource_status()} | {error, term()}.
+channel_health_check(ResId, ChannelId) ->
+    emqx_resource_manager:channel_health_check(ResId, ChannelId).
+
 set_resource_status_connecting(ResId) ->
     emqx_resource_manager:set_resource_status_connecting(ResId).
 
@@ -471,6 +485,14 @@ call_start(ResId, Mod, Config) ->
     | {error, term()}.
 call_health_check(ResId, Mod, ResourceState) ->
     ?SAFE_CALL(Mod:on_get_status(ResId, ResourceState)).
+
+-spec call_channel_health_check(resource_id(), channel_id(), module(), resource_state()) ->
+    resource_status()
+    | {resource_status()}
+    | {resource_status(), term()}
+    | {error, term()}.
+call_channel_health_check(ResId, ChannelId, Mod, ResourceState) ->
+    ?SAFE_CALL(Mod:on_get_channel_status(ResId, ChannelId, ResourceState)).
 
 call_add_channel(ResId, Mod, ResourceState, ChannelId, ChannelConfig) ->
     %% Check if maybe_install_insert_template is exported

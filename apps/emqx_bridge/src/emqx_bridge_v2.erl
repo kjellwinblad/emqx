@@ -48,7 +48,8 @@
     config_key_path/0,
     disable_enable/3,
     create/3,
-    remove/2
+    remove/2,
+    health_check/2
 ]).
 
 %% Config Update Handler API
@@ -185,6 +186,24 @@ send_message(BridgeType, BridgeName, Message, QueryOpts0) ->
     case lookup(BridgeType, BridgeName) of
         #{enable := true} = Config ->
             do_send_msg_with_enabled_config(BridgeType, BridgeName, Message, QueryOpts0, Config);
+        #{enable := false} ->
+            {error, bridge_stopped};
+        Error ->
+            Error
+    end.
+
+health_check(BridgeType, BridgeName) ->
+    case lookup(BridgeType, BridgeName) of
+        #{
+            enable := true,
+            connector := ConnectorName
+        } ->
+            ConnectorId = emqx_connector_resource:resource_id(
+                bridge_v2_type_to_connector_type(BridgeType), ConnectorName
+            ),
+            emqx_resource_manager:channel_health_check(
+                ConnectorId, id(BridgeType, BridgeName, ConnectorName)
+            );
         #{enable := false} ->
             {error, bridge_stopped};
         Error ->

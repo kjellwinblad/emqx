@@ -17,7 +17,8 @@
     on_get_status/2,
     on_add_channel/4,
     on_remove_channel/3,
-    on_get_channels/1
+    on_get_channels/1,
+    on_get_channel_status/3
 ]).
 
 -export([
@@ -465,6 +466,10 @@ on_get_status(
         {error, _Reason} ->
             connecting
     end.
+
+on_get_channel_status(_ResId, _ChannelId, _ResourceState) ->
+    %% TODO add actual channel status
+    connected.
 
 % check_if_healthy_leaders(Client, KafkaTopic) when is_pid(Client) ->
 %     Leaders =

@@ -30,6 +30,7 @@
     start/2,
     stop/1,
     health_check/1,
+    channel_health_check/2,
     add_channel/3,
     remove_channel/2
 ]).
@@ -275,6 +276,11 @@ list_group(Group) ->
 health_check(ResId) ->
     safe_call(ResId, health_check, ?T_OPERATION).
 
+-spec channel_health_check(resource_id(), channel_id()) ->
+    {ok, resource_status()} | {error, term()}.
+channel_health_check(ResId, ChannelId) ->
+    safe_call(ResId, {channel_health_check, ChannelId}, ?T_OPERATION).
+
 add_channel(ResId, ChannelId, Config) ->
     %% Use cache to avoid doing inter process communication on every call
     Data = read_cache(ResId),
@@ -372,8 +378,13 @@ handle_event({call, From}, lookup, _State, #data{group = Group} = Data) ->
 handle_event({call, From}, health_check, stopped, _Data) ->
     Actions = [{reply, From, {error, resource_is_stopped}}],
     {keep_state_and_data, Actions};
+handle_event({call, From}, {channel_health_check, _}, stopped, _Data) ->
+    Actions = [{reply, From, {error, resource_is_stopped}}],
+    {keep_state_and_data, Actions};
 handle_event({call, From}, health_check, _State, Data) ->
     handle_manually_health_check(From, Data);
+handle_event({call, From}, {channel_health_check, ChannelId}, _State, Data) ->
+    handle_manually_channel_health_check(From, Data, ChannelId);
 % State: CONNECTING
 handle_event(enter, _OldState, connecting = State, Data) ->
     ok = log_state_consistency(State, Data),
@@ -607,6 +618,14 @@ handle_add_channel(From, Data, ChannelId, ChannelConfig) ->
     end.
 
 handle_add_channel_need_insert(From, Data, ChannelId, Data, ChannelConfig) ->
+    case add_channel_need_insert_update_data(Data, ChannelId, ChannelConfig) of
+        {ok, NewData} ->
+            {keep_state, NewData, [{reply, From, ok}]};
+        {error, _Reason} = Error ->
+            {keep_state_and_data, [{reply, From, Error}]}
+    end.
+
+add_channel_need_insert_update_data(Data, ChannelId, ChannelConfig) ->
     case
         emqx_resource:call_add_channel(
             Data#data.id, Data#data.mod, Data#data.state, ChannelId, ChannelConfig
@@ -620,7 +639,7 @@ handle_add_channel_need_insert(From, Data, ChannelId, Data, ChannelConfig) ->
                 added_channels = NewAddedChannelsMap
             },
             update_state(UpdatedData, Data),
-            {keep_state, UpdatedData, [{reply, From, ok}]};
+            {ok, UpdatedData};
         {error, Reason} = Error ->
             %% Log the error as a warning
             ?SLOG(warning, #{
@@ -629,7 +648,7 @@ handle_add_channel_need_insert(From, Data, ChannelId, Data, ChannelConfig) ->
                 channel_id => ChannelId,
                 reason => Reason
             }),
-            {keep_state_and_data, [{reply, From, Error}]}
+            Error
     end.
 
 handle_remove_channel(From, ChannelId, Data) ->
@@ -677,6 +696,55 @@ handle_manually_health_check(From, Data) ->
             {next_state, Status, UpdatedData, Actions}
         end
     ).
+
+handle_manually_channel_health_check(From, #data{state = undefined}, _ChannelId) ->
+    {keep_state_and_data, [{reply, From, {ok, disconnected}}]};
+handle_manually_channel_health_check(
+    From,
+    #data{added_channels = Channels} = Data,
+    ChannelId
+) when
+    is_map_key(ChannelId, Channels)
+->
+    {keep_state_and_data, [{reply, From, get_channel_status_channel_added(Data, ChannelId)}]};
+handle_manually_channel_health_check(
+    From,
+    Data,
+    ChannelId
+) ->
+    %% add channel
+    ResId = Data#data.id,
+    Mod = Data#data.mod,
+    case emqx_resource:call_get_channel_config(ResId, ChannelId, Mod) of
+        ChannelConfig when is_map(ChannelConfig) ->
+            case add_channel_need_insert_update_data(Data, ChannelId, ChannelConfig) of
+                {ok, UpdatedData} ->
+                    {keep_state, UpdatedData, [
+                        {reply, From, get_channel_status_channel_added(UpdatedData, ChannelId)}
+                    ]};
+                {error, Reason} = Error ->
+                    %% Log the error as a warning
+                    ?SLOG(warning, #{
+                        msg => add_channel_failed_when_doing_status_check,
+                        id => ResId,
+                        channel_id => ChannelId,
+                        reason => Reason
+                    }),
+                    {keep_state_and_data, [{reply, From, Error}]}
+            end;
+        {error, Reason} = Error ->
+            %% Log the error as a warning
+            ?SLOG(warning, #{
+                msg => get_channel_config_failed_when_doing_status_check,
+                id => ResId,
+                channel_id => ChannelId,
+                reason => Reason
+            }),
+            {keep_state_and_data, [{reply, From, Error}]}
+    end.
+
+get_channel_status_channel_added(#data{id = ResId, mod = Mod, state = State}, ChannelId) ->
+    emqx_resource:call_channel_health_check(ResId, ChannelId, Mod, State).
 
 handle_connecting_health_check(Data) ->
     with_health_check(
