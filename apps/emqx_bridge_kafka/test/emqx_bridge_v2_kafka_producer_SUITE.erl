@@ -13,7 +13,7 @@
 %% limitations under the License.
 %%--------------------------------------------------------------------
 
--module(emqx_bridge_v2_CRUD_SUITE).
+-module(emqx_bridge_v2_kafka_producer_SUITE).
 
 -compile(nowarn_export_all).
 -compile(export_all).
@@ -21,13 +21,17 @@
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("common_test/include/ct.hrl").
 -include_lib("snabbkaffe/include/snabbkaffe.hrl").
-
+-include_lib("brod/include/brod.hrl").
 all() ->
     emqx_common_test_helpers:all(?MODULE).
 
 init_per_suite(Config) ->
     _ = application:load(emqx_conf),
     ok = emqx_common_test_helpers:start_apps(apps_to_start_and_stop()),
+    application:ensure_all_started(telemetry),
+    application:ensure_all_started(wolff),
+    application:ensure_all_started(brod),
+    emqx_bridge_kafka_impl_producer_SUITE:wait_until_kafka_is_up(),
     Config.
 
 end_per_suite(_Config) ->
@@ -46,7 +50,7 @@ t_create_remove_list(_) ->
     [] = emqx_bridge_v2:list(),
     ConnectorConfig = connector_config(),
     {ok, _} = emqx_connector:create(kafka, test_connector, ConnectorConfig),
-    Config = bridge_v2_config(),
+    Config = bridge_v2_config(<<"test_connector">>),
     {ok, _Config} = emqx_bridge_v2:create(kafka, test_bridge_v2, Config),
     [BridgeV2Info] = emqx_bridge_v2:list(),
     #{
@@ -60,22 +64,82 @@ t_create_remove_list(_) ->
     1 = length(emqx_bridge_v2:list()),
     {ok, _} = emqx_bridge_v2:remove(kafka, test_bridge_v2_2),
     [] = emqx_bridge_v2:list(),
+    %% TODO remove connector
     ok.
 
 %% Test sending a message to a bridge V2
-% t_send_message(_) ->
-%     BridgeV2Config = bridge_v2_config(),
-%     ConnectorConfig = connector_config(),
-%     {ok, _} = emqx_connector:create(kafka, test_connector, ConnectorConfig),
-%     {ok, _} = emqx_bridge_v2:create(kafka, test_bridge_v2, BridgeV2Config),
-%     BridgeV2Id = emqx_bridge_v2:id(kafka, test_bridge_v2),
-%     {ok, _} = emqx_bridge_v2:send_message(kafka, test_bridge_v2, {BridgeV2Id, <<"test">>}, #{}),
-%     {ok, _} = emqx_bridge_v2:remove(kafka, test_bridge_v2),
-%     ok.
+t_send_message(_) ->
+    BridgeV2Config = bridge_v2_config(<<"test_connector2">>),
+    ConnectorConfig = connector_config(),
+    {ok, _} = emqx_connector:create(kafka, test_connector2, ConnectorConfig),
+    {ok, _} = emqx_bridge_v2:create(kafka, test_bridge_v2_1, BridgeV2Config),
+    %% Use the bridge to send a message
+    check_send_message_with_bridge(test_bridge_v2_1),
+    %% Create a few more bridges with the same connector and test them
+    BridgeNames1 = [
+        list_to_atom("test_bridge_v2_" ++ integer_to_list(I))
+     || I <- lists:seq(2, 10)
+    ],
+    lists:foreach(
+        fun(BridgeName) ->
+            {ok, _} = emqx_bridge_v2:create(kafka, BridgeName, BridgeV2Config),
+            check_send_message_with_bridge(BridgeName)
+        end,
+        BridgeNames1
+    ),
+    BridgeNames = [test_bridge_v2_1 | BridgeNames1],
+    %% Send more messages to the bridges
+    lists:foreach(
+        fun(BridgeName) ->
+            lists:foreach(
+                fun(_) ->
+                    check_send_message_with_bridge(BridgeName)
+                end,
+                lists:seq(1, 10)
+            )
+        end,
+        BridgeNames
+    ),
+    %% Remove all the bridges
+    lists:foreach(
+        fun(BridgeName) ->
+            {ok, _} = emqx_bridge_v2:remove(kafka, BridgeName)
+        end,
+        BridgeNames
+    ),
+    %% TODO remove connector
+    ok.
 
-bridge_v2_config() ->
+check_send_message_with_bridge(BridgeName) ->
+    %% ######################################
+    %% Create Kafka message
+    %% ######################################
+    KafkaTopic = emqx_bridge_kafka_impl_producer_SUITE:test_topic_one_partition(),
+    Partition = 0,
+    Time = erlang:unique_integer(),
+    BinTime = integer_to_binary(Time),
+    Msg = #{
+        clientid => BinTime,
+        payload => <<"payload">>,
+        timestamp => Time
+    },
+    Hosts = emqx_bridge_kafka_impl_producer_SUITE:kafka_hosts(),
+    {ok, Offset0} = emqx_bridge_kafka_impl_producer_SUITE:resolve_kafka_offset(
+        Hosts, KafkaTopic, Partition
+    ),
+    %% ######################################
+    %% Send message
+    %% ######################################
+    emqx_bridge_v2:send_message(kafka, BridgeName, Msg, #{}),
+    %% ######################################
+    %% Check if message is sent to Kafka
+    %% ######################################
+    {ok, {_, [KafkaMsg0]}} = brod:fetch(Hosts, KafkaTopic, Partition, Offset0),
+    ?assertMatch(#kafka_message{key = BinTime}, KafkaMsg0).
+
+bridge_v2_config(ConnectorName) ->
     #{
-        <<"connector">> => <<"test_connector">>,
+        <<"connector">> => ConnectorName,
         <<"enable">> => true,
         <<"kafka">> => #{
             <<"buffer">> => #{
@@ -95,10 +159,10 @@ bridge_v2_config() ->
             },
             <<"partition_count_refresh_interval">> => <<"60s">>,
             <<"partition_strategy">> => <<"random">>,
-            <<"query_mode">> => <<"async">>,
+            <<"query_mode">> => <<"sync">>,
             <<"required_acks">> => <<"all_isr">>,
             <<"sync_query_timeout">> => <<"5s">>,
-            <<"topic">> => <<"testtopic-in">>
+            <<"topic">> => emqx_bridge_kafka_impl_producer_SUITE:test_topic_one_partition()
         },
         <<"local_topic">> => <<"kafka_t/#">>,
         <<"resource_opts">> => #{
