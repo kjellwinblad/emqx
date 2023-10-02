@@ -64,7 +64,7 @@ t_create_remove_list(_) ->
     1 = length(emqx_bridge_v2:list()),
     {ok, _} = emqx_bridge_v2:remove(kafka, test_bridge_v2_2),
     [] = emqx_bridge_v2:list(),
-    %% TODO remove connector
+    emqx_connector:remove(kafka, test_connector),
     ok.
 
 %% Test sending a message to a bridge V2
@@ -107,7 +107,20 @@ t_send_message(_) ->
         end,
         BridgeNames
     ),
-    %% TODO remove connector
+    emqx_connector:remove(kafka, test_connector2),
+    ok.
+
+%% Test that we can get the status of the bridge V2
+t_health_check(_) ->
+    BridgeV2Config = bridge_v2_config(<<"test_connector3">>),
+    ConnectorConfig = connector_config(),
+    {ok, _} = emqx_connector:create(kafka, test_connector3, ConnectorConfig),
+    {ok, _} = emqx_bridge_v2:create(kafka, test_bridge_v2, BridgeV2Config),
+    connected = emqx_bridge_v2:health_check(kafka, test_bridge_v2),
+    {ok, _} = emqx_bridge_v2:remove(kafka, test_bridge_v2),
+    %% Check behaviour when bridge does not exist
+    {error, bridge_not_found} = emqx_bridge_v2:health_check(kafka, test_bridge_v2),
+    {ok, _} = emqx_connector:remove(kafka, test_connector3),
     ok.
 
 check_send_message_with_bridge(BridgeName) ->
