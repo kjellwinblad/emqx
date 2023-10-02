@@ -139,7 +139,7 @@ create_producers_for_bridge_v2(
                 string:equal(TestIdStart, InstId)
         end,
     ok = check_topic_status(Hosts, KafkaConfig, KafkaTopic),
-    % ok = check_if_healthy_leaders(ClientId, KafkaTopic),
+    ok = check_if_healthy_leaders(ClientId, KafkaTopic),
     WolffProducerConfig = producers_config(BridgeName, ClientId, KafkaConfig, IsDryRun, BridgeV2Id),
     case wolff:ensure_supervised_producers(ClientId, KafkaTopic, WolffProducerConfig) of
         {ok, Producers} ->
@@ -455,58 +455,93 @@ on_kafka_ack(_Partition, buffer_overflow_discarded, _Callback) ->
 %% `emqx_resource_manager' will kill the wolff producers and messages might be lost.
 on_get_status(
     <<"connector:", _/binary>> = _InstId,
-    #{client_id := ClientId} = State
+    #{client_id := ClientId} = _State
 ) ->
     case wolff_client_sup:find_client(ClientId) of
         {ok, Pid} ->
             case wolff_client:check_connectivity(Pid) of
                 ok -> connected;
-                {error, Error} -> {connecting, State, Error}
+                {error, Error} -> {connecting, Error}
             end;
         {error, _Reason} ->
             connecting
     end.
 
-on_get_channel_status(_ResId, _ChannelId, _ResourceState) ->
-    %% TODO add actual channel status
-    connected.
+on_get_channel_status(
+    _ResId,
+    ChannelId,
+    #{
+        client_id := ClientId,
+        hosts := Hosts,
+        installed_bridge_v2s := Channels
+    } = _State
+) ->
+    ChannelState = maps:get(ChannelId, Channels),
+    case wolff_client_sup:find_client(ClientId) of
+        {ok, Pid} ->
+            case wolff_client:check_connectivity(Pid) of
+                ok ->
+                    try check_leaders_and_topic(Pid, Hosts, ChannelState) of
+                        ok ->
+                            connected
+                    catch
+                        _ErrorType:Reason ->
+                            {connecting, Reason}
+                    end;
+                {error, Error} ->
+                    {connecting, Error}
+            end;
+        {error, _Reason} ->
+            connecting
+    end.
 
-% check_if_healthy_leaders(Client, KafkaTopic) when is_pid(Client) ->
-%     Leaders =
-%         case wolff_client:get_leader_connections(Client, KafkaTopic) of
-%             {ok, LeadersToCheck} ->
-%                 %% Kafka is considered healthy as long as any of the partition leader is reachable.
-%                 lists:filtermap(
-%                     fun({_Partition, Pid}) ->
-%                         case is_pid(Pid) andalso erlang:is_process_alive(Pid) of
-%                             true -> {true, Pid};
-%                             _ -> false
-%                         end
-%                     end,
-%                     LeadersToCheck
-%                 );
-%             {error, _} ->
-%                 []
-%         end,
-%     case Leaders of
-%         [] ->
-%             throw(
-%                 iolist_to_binary(
-%                     io_lib:format("Could not find any healthy partion leader for topic ~s", [
-%                         KafkaTopic
-%                     ])
-%                 )
-%             );
-%         _ ->
-%             ok
-%     end;
-% check_if_healthy_leaders(ClientId, KafkaTopic) ->
-%     case wolff_client_sup:find_client(ClientId) of
-%         {ok, Pid} ->
-%             check_if_healthy_leaders(Pid, KafkaTopic);
-%         {error, _Reason} ->
-%             throw(iolist_to_binary(io_lib:format("Could not find Kafka client: ~p", [ClientId])))
-%     end.
+check_leaders_and_topic(
+    Client,
+    Hosts,
+    #{
+        kafka_config := KafkaConfig,
+        kafka_topic := KafkaTopic
+    } = _ChannelState
+) ->
+    check_if_healthy_leaders(Client, KafkaTopic),
+    check_topic_status(Hosts, KafkaConfig, KafkaTopic).
+
+check_if_healthy_leaders(Client, KafkaTopic) when is_pid(Client) ->
+    Leaders =
+        case wolff_client:get_leader_connections(Client, KafkaTopic) of
+            {ok, LeadersToCheck} ->
+                %% Kafka is considered healthy as long as any of the partition leader is reachable.
+                lists:filtermap(
+                    fun({_Partition, Pid}) ->
+                        case is_pid(Pid) andalso erlang:is_process_alive(Pid) of
+                            true -> {true, Pid};
+                            _ -> false
+                        end
+                    end,
+                    LeadersToCheck
+                );
+            {error, _} ->
+                []
+        end,
+    case Leaders of
+        [] ->
+            throw(
+                iolist_to_binary(
+                    io_lib:format("Could not find any healthy partion leader for topic ~s", [
+                        KafkaTopic
+                    ])
+                )
+            );
+        _ ->
+            ok
+    end;
+check_if_healthy_leaders(ClientId, KafkaTopic) ->
+    case wolff_client_sup:find_client(ClientId) of
+        {ok, Pid} ->
+            check_if_healthy_leaders(Pid, KafkaTopic);
+        {error, _Reason} ->
+            throw(iolist_to_binary(io_lib:format("Could not find Kafka client: ~p", [ClientId])))
+    end.
 
 check_topic_status(Hosts, KafkaConfig, KafkaTopic) ->
     CheckTopicFun =
@@ -525,7 +560,8 @@ check_topic_status(Hosts, KafkaConfig, KafkaTopic) ->
                 ok
         end
     catch
-        _:_ ->
+        error:_:_ ->
+            %% Some other error not related to unknown_topic_or_partition
             ok
     end.
 
