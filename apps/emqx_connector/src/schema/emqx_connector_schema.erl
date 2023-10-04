@@ -21,7 +21,7 @@
 
 -import(hoconsc, [mk/2, ref/2]).
 
--export([transform_old_style_bridges_to_connector_and_actions/1]).
+-export([transform_bridges_v1_to_connectors_and_bridges_v2/1]).
 
 -export([roots/0, fields/1, desc/1, namespace/0, tags/0]).
 
@@ -185,13 +185,15 @@ transform_old_style_bridges_to_connector_and_actions_of_type(
         ActionConnectorTuples
     ).
 
-transform_old_style_bridges_to_connector_and_actions(RawConfig) ->
+transform_bridges_v1_to_connectors_and_bridges_v2(RawConfig) ->
+    x:show(raw_conf_before, RawConfig),
     ConnectorFields = fields(connectors),
     NewRawConf = lists:foldl(
         fun transform_old_style_bridges_to_connector_and_actions_of_type/2,
         RawConfig,
         ConnectorFields
     ),
+    x:show(raw_conf_after, NewRawConf),
     NewRawConf.
 
 %%======================================================================================

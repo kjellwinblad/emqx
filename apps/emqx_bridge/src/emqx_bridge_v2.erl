@@ -22,6 +22,7 @@
 -include_lib("emqx/include/logger.hrl").
 -include_lib("emqx/include/emqx_hooks.hrl").
 -include_lib("snabbkaffe/include/snabbkaffe.hrl").
+-include_lib("emqx_resource/include/emqx_resource.hrl").
 
 -export([
     load/0,
@@ -30,8 +31,9 @@
     id/2,
     id/3,
     parse_id/1,
-    send_message/4,
     bridge_v2_type_to_connector_type/1,
+    bridge_v1_type_to_bridge_v2_type/1,
+    bridge_v1_id_to_connector_resource_id/1,
     is_bridge_v2_id/1,
     extract_connector_id_from_bridge_v2_id/1,
     is_bridge_v2_installed_in_connector_state/2,
@@ -41,7 +43,11 @@
 %% Compatibility API
 
 -export([
-    lookup_and_transform_to_bridge_v1/2
+    lookup_and_transform_to_bridge_v1/2,
+    list_and_transform_to_bridge_v1/0,
+    check_deps_and_remove_transform_to_bridge_v1/3,
+    split_bridge_v1_config_and_create/3,
+    bridge_v1_create_dry_run/2
 ]).
 
 %% CRUD API
@@ -55,13 +61,23 @@
     disable_enable/3,
     create/3,
     remove/2,
-    health_check/2
+    check_deps_and_remove/3
+]).
+
+%% Operations
+-export([
+    health_check/2,
+    send_message/4,
+    start/2,
+    stop/2,
+    restart/2
 ]).
 
 %% Config Update Handler API
 
 -export([
-    post_config_update/5
+    post_config_update/5,
+    pre_config_update/3
 ]).
 
 -define(ROOT_KEY, bridges_v2).
@@ -130,12 +146,14 @@ install_bridge_v2(
     _BridgeName,
     #{enable := false}
 ) ->
+    erlang:display({skip, "Bridge V2 is disabled"}),
     ok;
 install_bridge_v2(
     BridgeV2Type,
     BridgeName,
     #{connector := ConnectorName} = Config
 ) ->
+    erlang:display({install, BridgeV2Type, BridgeName, ConnectorName}),
     CreationOpts = emqx_resource:fetch_creation_opts(Config),
     BridgeV2Id = id(BridgeV2Type, BridgeName, ConnectorName),
     %% Create metrics for Bridge V2
@@ -166,6 +184,7 @@ uninstall_bridge_v2(
     _BridgeName,
     #{enable := false}
 ) ->
+    erlang:display({skip, "Bridge V2 is disabled"}),
     %% Already not installed
     ok;
 uninstall_bridge_v2(
@@ -173,6 +192,7 @@ uninstall_bridge_v2(
     BridgeName,
     #{connector := ConnectorName} = Config
 ) ->
+    erlang:display({uninstall, BridgeV2Type, BridgeName, ConnectorName}),
     BridgeV2Id = id(BridgeV2Type, BridgeName, ConnectorName),
     CreationOpts = emqx_resource:fetch_creation_opts(Config),
     ok = emqx_resource_buffer_worker_sup:stop_workers(BridgeV2Id, CreationOpts),
@@ -215,6 +235,52 @@ health_check(BridgeType, BridgeName) ->
         Error ->
             Error
     end.
+
+disable_enable(Action, BridgeType, BridgeName) when
+    Action =:= disable; Action =:= enable
+->
+    emqx_conf:update(
+        config_key_path() ++ [BridgeType, BridgeName],
+        {Action, BridgeType, BridgeName},
+        #{override_to => cluster}
+    ).
+
+restart(Type, Name) ->
+    stop(Type, Name),
+    start(Type, Name).
+
+%% TODO: The following functions just restart the bridge_v2 as a temporary solution.
+
+stop(Type, Name) ->
+    %% Stop means that we should remove the channel from the connector and reset the metrrics
+    %% The emqx_resource_buffer_worker is not stopped
+    stop_helper(Type, Name, lookup_raw_conf(Type, Name)).
+
+stop_helper(_Type, _Name, #{enable := false}) ->
+    ok;
+stop_helper(BridgeV2Type, BridgeName, #{connector := ConnectorName}) ->
+    erlang:display({stop, BridgeV2Type, BridgeName, ConnectorName}),
+    BridgeV2Id = id(BridgeV2Type, BridgeName, ConnectorName),
+    ok = emqx_resource:clear_metrics(BridgeV2Id),
+    ConnectorId = emqx_connector_resource:resource_id(
+        bridge_v2_type_to_connector_type(BridgeV2Type), ConnectorName
+    ),
+    emqx_resource_manager:remove_channel(ConnectorId, BridgeV2Id).
+
+start(Type, Name) ->
+    %% Start means that we should add the channel to the connector (if it is not already there)
+    start_helper(Type, Name, lookup_raw_conf(Type, Name)).
+
+start_helper(_Type, _Name, #{enable := false}) ->
+    ok;
+start_helper(BridgeV2Type, BridgeName, #{connector := ConnectorName}) ->
+    erlang:display({start, BridgeV2Type, BridgeName, ConnectorName}),
+    BridgeV2Id = id(BridgeV2Type, BridgeName, ConnectorName),
+    %% Deinstall from connector
+    ConnectorId = emqx_connector_resource:resource_id(
+        bridge_v2_type_to_connector_type(BridgeV2Type), ConnectorName
+    ),
+    emqx_resource_manager:add_channel(ConnectorId, BridgeV2Id, #{connector => ConnectorName}).
 
 % do_send_msg_with_enabled_config(BridgeType, BridgeName, Message, QueryOpts0, Config) ->
 %     BridgeV2Id = emqx_bridge_v2:id(BridgeType, BridgeName),
@@ -285,13 +351,29 @@ id(BridgeType, BridgeName, ConnectorName) ->
     <<"bridge_v2:", (bin(BridgeType))/binary, ":", (bin(BridgeName))/binary, ":connector:",
         (bin(ConnectorType))/binary, ":", (bin(ConnectorName))/binary>>.
 
+%% Creates the external id for the bridge_v2 that is used by the rule actions
+%% to refer to the bridge_v2
+external_id(BridgeType, BridgeName) ->
+    Name = bin(BridgeName),
+    Type = bin(BridgeType),
+    <<Type/binary, ":", Name/binary>>.
+
 bridge_v2_type_to_connector_type(Bin) when is_binary(Bin) ->
     bridge_v2_type_to_connector_type(binary_to_existing_atom(Bin));
 bridge_v2_type_to_connector_type(kafka) ->
     kafka.
 
-is_bridge_v2_type(kafka) -> true;
-is_bridge_v2_type(_) -> false.
+bridge_v1_type_to_bridge_v2_type(Bin) when is_binary(Bin) ->
+    bridge_v1_type_to_bridge_v2_type(binary_to_existing_atom(Bin));
+bridge_v1_type_to_bridge_v2_type(kafka) ->
+    kafka.
+
+is_bridge_v2_type(Atom) when is_atom(Atom) ->
+    is_bridge_v2_type(atom_to_binary(Atom, utf8));
+is_bridge_v2_type(<<"kafka">>) ->
+    true;
+is_bridge_v2_type(_) ->
+    false.
 
 is_bridge_v2_id(<<"bridge_v2:", _/binary>>) -> true;
 is_bridge_v2_id(_) -> false.
@@ -311,6 +393,12 @@ bin(Atom) when is_atom(Atom) -> atom_to_binary(Atom, utf8).
 %% Basic CRUD Operations
 
 list() ->
+    list_with_lookup_fun(fun lookup/2).
+
+list_and_transform_to_bridge_v1() ->
+    list_with_lookup_fun(fun lookup_and_transform_to_bridge_v1/2).
+
+list_with_lookup_fun(LookupFun) ->
     maps:fold(
         fun(Type, NameAndConf, Bridges) ->
             maps:fold(
@@ -318,7 +406,7 @@ list() ->
                     [
                         begin
                             {ok, BridgeInfo} =
-                                lookup(Type, Name),
+                                LookupFun(Type, Name),
                             BridgeInfo
                         end
                         | Acc
@@ -336,17 +424,27 @@ lookup(Id) ->
     {Type, Name} = parse_id(Id),
     lookup(Type, Name).
 
+%% TODO should not call this
+% to_atom(Bin) when is_binary(Bin) ->
+%     binary_to_atom(Bin);
+% to_atom(Atom) when is_atom(Atom) ->
+%     Atom.
+
 lookup(Type, Name) ->
-    case emqx:get_config([?ROOT_KEY, Type, Name], not_found) of
+    x:show(all_conf, emqx:get_raw_config([?ROOT_KEY])),
+    x:show(type_name, {Type, Name}),
+    case x:show(emqx:get_raw_config([?ROOT_KEY, Type, Name], not_found)) of
         not_found ->
             {error, bridge_not_found};
-        #{connector := BridgeConnector} = RawConf ->
+        #{<<"connector">> := BridgeConnector} = RawConf ->
             ConnectorId = emqx_connector_resource:resource_id(
                 bridge_v2_type_to_connector_type(Type), BridgeConnector
             ),
             InstanceData =
-                case emqx_resource:get_instance(ConnectorId) of
+                case x:show(get_instace, emqx_resource:get_instance(ConnectorId)) of
                     {error, not_found} ->
+                        x:show(ConnectorId),
+                        x:show(instances, emqx_resource:list_instances()),
                         %% TODO should we throw an error here (this should not happen)?
                         {error, not_found};
                     {ok, _, Data} ->
@@ -361,8 +459,9 @@ lookup(Type, Name) ->
     end.
 
 lookup_and_transform_to_bridge_v1(Type, Name) ->
+    x:show(lookup_and_transform_to_bridge_v1, {Type, Name}),
     case lookup(Type, Name) of
-        {ok, #{raw_config := #{connector := ConnectorName}} = BridgeV2} ->
+        {ok, #{raw_config := #{<<"connector">> := ConnectorName}} = BridgeV2} ->
             ConnectorType = bridge_v2_type_to_connector_type(Type),
             case emqx_connector:lookup(ConnectorType, ConnectorName) of
                 {ok, Connector} ->
@@ -391,7 +490,7 @@ lookup_and_transform_to_bridge_v1_helper(BridgeV2Type, BridgeV2, ConnectorType, 
         <<"bridges_v2">>,
         emqx_bridge_v2_schema
     ),
-    BridgeV1Config1 = maps:remove(connector, BridgeV2RawConfig2),
+    BridgeV1Config1 = maps:remove(<<"connector">>, BridgeV2RawConfig2),
     BridgeV1Config2 = maps:merge(BridgeV1Config1, ConnectorRawConfig2),
     BridgeV1 = maps:put(raw_config, BridgeV1Config2, BridgeV2),
     {ok, BridgeV1}.
@@ -410,15 +509,6 @@ get_metrics(Type, Name) ->
 config_key_path() ->
     [?ROOT_KEY].
 
-disable_enable(Action, BridgeType, BridgeName) when
-    Action =:= disable; Action =:= enable
-->
-    emqx_conf:update(
-        config_key_path() ++ [BridgeType, BridgeName],
-        {Action, BridgeType, BridgeName},
-        #{override_to => cluster}
-    ).
-
 create(BridgeType, BridgeName, RawConf) ->
     ?SLOG(debug, #{
         brige_action => create,
@@ -433,6 +523,142 @@ create(BridgeType, BridgeName, RawConf) ->
         #{override_to => cluster}
     ).
 
+split_bridge_v1_config_and_create(BridgeV1Type, BridgeName, RawConf) ->
+    #{
+        connector_type := ConnectorType,
+        connector_name := NewConnectorName,
+        connector_conf := NewConnectorRawConf,
+        bridge_v2_type := BridgeType,
+        bridge_v2_name := BridgeName,
+        bridge_v2_conf := NewBridgeV2RawConf
+    } =
+        split_and_validate_bridge_v1_config(BridgeV1Type, BridgeName, RawConf),
+    x:show(split_bridge_v1_config_and_create),
+    %% TODO should we really create an atom here?
+    ConnectorNameAtom = binary_to_atom(NewConnectorName),
+    case emqx_connector:create(ConnectorType, ConnectorNameAtom, NewConnectorRawConf) of
+        {ok, _} ->
+            x:show(created_connector, {ConnectorType, ConnectorNameAtom}),
+            case create(BridgeType, BridgeName, NewBridgeV2RawConf) of
+                {ok, _} = Result ->
+                    Result;
+                Error ->
+                    emqx_connector:remove(ConnectorType, ConnectorNameAtom),
+                    Error
+            end;
+        Error ->
+            Error
+    end.
+
+split_and_validate_bridge_v1_config(BridgeType, BridgeName, RawConf) ->
+    %% Create fake global config for the transformation and then call
+    %% emqx_connector_schema:transform_bridges_v1_to_connectors_and_bridges_v2/1
+
+    ConnectorType = bridge_v2_type_to_connector_type(BridgeType),
+    %% Needed so name confligts will ba avoided
+    CurrentConnectorsConfig = emqx:get_raw_config([connectors], #{}),
+    FakeGlobalConfig = #{
+        <<"connectors">> => CurrentConnectorsConfig,
+        <<"bridges">> => #{
+            bin(BridgeType) => #{
+                bin(BridgeName) => RawConf
+            }
+        }
+    },
+    Output = emqx_connector_schema:transform_bridges_v1_to_connectors_and_bridges_v2(
+        FakeGlobalConfig
+    ),
+    NewBridgeV2RawConf =
+        emqx_utils_maps:deep_get(
+            [
+                bin(?ROOT_KEY),
+                bin(BridgeType),
+                bin(BridgeName)
+            ],
+            Output
+        ),
+    % x:show(xxxxxxxxxxxx_fake_global_config, FakeGlobalConfig),
+    ConnectorsBefore =
+        maps:keys(
+            emqx_utils_maps:deep_get(
+                [
+                    <<"connectors">>,
+                    bin(ConnectorType)
+                ],
+                FakeGlobalConfig,
+                #{}
+            )
+        ),
+    ConnectorsAfter =
+        maps:keys(
+            emqx_utils_maps:deep_get(
+                [
+                    <<"connectors">>,
+                    bin(ConnectorType)
+                ],
+                Output
+            )
+        ),
+    [NewConnectorName] = ConnectorsAfter -- ConnectorsBefore,
+    NewConnectorRawConf =
+        emqx_utils_maps:deep_get(
+            [
+                <<"connectors">>,
+                bin(ConnectorType),
+                bin(NewConnectorName)
+            ],
+            Output
+        ),
+    %% Validate the connector config and the bridge_v2 config
+    NewFakeGlobalConfig = #{
+        <<"connectors">> => #{
+            bin(ConnectorType) => #{
+                bin(NewConnectorName) => NewConnectorRawConf
+            }
+        },
+        <<"bridges_v2">> => #{
+            bin(BridgeType) => #{
+                bin(BridgeName) => NewBridgeV2RawConf
+            }
+        }
+    },
+    try
+        hocon_tconf:check_plain(
+            emqx_schema,
+            NewFakeGlobalConfig,
+            #{atom_key => false, required => false}
+        )
+    of
+        _ ->
+            #{
+                connector_type => ConnectorType,
+                connector_name => NewConnectorName,
+                connector_conf => NewConnectorRawConf,
+                bridge_v2_type => BridgeType,
+                bridge_v2_name => BridgeName,
+                bridge_v2_conf => NewBridgeV2RawConf
+            }
+    catch
+        %% validation errors
+        throw:Reason1 ->
+            {error, Reason1}
+    end.
+
+bridge_v1_create_dry_run(BridgeType, RawConfig0) ->
+    RawConf = maps:without(<<"name">>, RawConfig0),
+    TmpName = iolist_to_binary([?TEST_ID_PREFIX, emqx_utils:gen_id(8)]),
+    #{
+        connector_type := _ConnectorType,
+        connector_name := _NewConnectorName,
+        connector_conf := _NewConnectorRawConf,
+        bridge_v2_type := _BridgeType,
+        bridge_v2_name := _BridgeName,
+        bridge_v2_conf := _NewBridgeV2RawConf
+    } =
+        split_and_validate_bridge_v1_config(BridgeType, TmpName, RawConf),
+    % TODO once we have implemented the dry-run for channels we should use it here
+    ok.
+
 remove(BridgeType, BridgeName) ->
     ?SLOG(debug, #{
         brige_action => remove,
@@ -444,6 +670,48 @@ remove(BridgeType, BridgeName) ->
         config_key_path() ++ [BridgeType, BridgeName],
         #{override_to => cluster}
     ).
+
+check_deps_and_remove(BridgeType, BridgeName, RemoveDeps) ->
+    BridgeId = external_id(BridgeType, BridgeName),
+    %% NOTE: This violates the design: Rule depends on data-bridge but not vice versa.
+    case emqx_rule_engine:get_rule_ids_by_action(BridgeId) of
+        [] ->
+            remove(BridgeType, BridgeName);
+        RuleIds when RemoveDeps =:= false ->
+            {error, {rules_deps_on_this_bridge, RuleIds}};
+        RuleIds when RemoveDeps =:= true ->
+            lists:foreach(
+                fun(R) ->
+                    emqx_rule_engine:ensure_action_removed(R, BridgeId)
+                end,
+                RuleIds
+            ),
+            remove(BridgeType, BridgeName)
+    end.
+
+check_deps_and_remove_transform_to_bridge_v1(BridgeType, BridgeName, RemoveDeps) ->
+    case check_deps_and_remove(BridgeType, BridgeName, RemoveDeps) of
+        {error, _} = Error ->
+            Error;
+        Result ->
+            %% TODO: We should call emqx_connector:check_deps_and_remove here
+            %% to remain as backward compatible as possible.
+            Result
+    end.
+
+%% NOTE: We depends on the `emqx_bridge:pre_config_update/3` to restart/stop the
+%%       underlying resources.
+pre_config_update(_, {_Oper, _, _}, undefined) ->
+    {error, bridge_not_found};
+pre_config_update(_, {Oper, _Type, _Name}, OldConfig) ->
+    %% to save the 'enable' to the config files
+    erlang:display({pre_config_update, Oper, OldConfig}),
+    {ok, OldConfig#{<<"enable">> => operation_to_enable(Oper)}};
+pre_config_update(_Path, Conf, _OldConfig) when is_map(Conf) ->
+    {ok, Conf}.
+
+operation_to_enable(disable) -> false;
+operation_to_enable(enable) -> true.
 
 %% This top level handler will be triggered when the bridges_v2 path is updated
 %% with calls to emqx_conf:update([bridges_v2], BridgesConf, #{}).
@@ -564,3 +832,18 @@ unpack_bridge_conf(Type, PackedConf, TopLevelConf) ->
     #{TopLevelConf := Bridges} = PackedConf,
     #{<<"foo">> := RawConf} = maps:get(TypeBin, Bridges),
     RawConf.
+
+bridge_v1_id_to_connector_resource_id(BridgeId) ->
+    case binary:split(BridgeId, <<":">>) of
+        [Type, Name] ->
+            BridgeV2Type = bin(bridge_v1_type_to_bridge_v2_type(Type)),
+            ConnectorName =
+                case lookup_raw_conf(BridgeV2Type, Name) of
+                    #{connector := Con} ->
+                        Con;
+                    Error ->
+                        throw(Error)
+                end,
+            ConnectorType = bin(bridge_v2_type_to_connector_type(BridgeV2Type)),
+            <<"connector:", ConnectorType/binary, ":", ConnectorName/binary>>
+    end.
