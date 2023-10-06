@@ -72,6 +72,19 @@ on_start(<<"connector:", _/binary>> = InstId, Config) ->
     },
     case wolff:ensure_supervised_client(ClientId, Hosts, ClientConfig) of
         {ok, _} ->
+            case wolff_client_sup:find_client(ClientId) of
+                {ok, Pid} ->
+                    case wolff_client:check_connectivity(Pid) of
+                        ok ->
+                            ok;
+                        {error, Error} ->
+                            deallocate_client(ClientId),
+                            throw({failed_to_connect, Error})
+                    end;
+                {error, Reason} ->
+                    deallocate_client(ClientId),
+                    throw({failed_to_find_created_client, Reason})
+            end,
             ?SLOG(info, #{
                 msg => "kafka_client_started",
                 instance_id => InstId,
@@ -104,6 +117,7 @@ on_add_channel(
     BridgeV2Id,
     BridgeV2Config
 ) ->
+    x:show(on_add_channel_xxx, OldState),
     %% The following will throw an exception if the bridge producers fails to start
     {ok, BridgeV2State} = create_producers_for_bridge_v2(
         InstId, BridgeV2Id, ClientId, Hosts, BridgeV2Config
@@ -111,7 +125,15 @@ on_add_channel(
     NewInstalledBridgeV2s = maps:put(BridgeV2Id, BridgeV2State, InstalledBridgeV2s),
     %% Update state
     NewState = OldState#{installed_bridge_v2s => NewInstalledBridgeV2s},
-    {ok, NewState}.
+    {ok, NewState};
+on_add_channel(
+    _InstId,
+    OldState,
+    _BridgeV2Id,
+    _BridgeV2Config
+) ->
+    x:show(on_add_channel_xxx2, OldState),
+    throw(really_fun_clause).
 
 create_producers_for_bridge_v2(
     InstId,
@@ -455,13 +477,13 @@ on_kafka_ack(_Partition, buffer_overflow_discarded, _Callback) ->
 %% `emqx_resource_manager' will kill the wolff producers and messages might be lost.
 on_get_status(
     <<"connector:", _/binary>> = _InstId,
-    #{client_id := ClientId} = _State
+    #{client_id := ClientId} = State
 ) ->
     case wolff_client_sup:find_client(ClientId) of
         {ok, Pid} ->
             case wolff_client:check_connectivity(Pid) of
                 ok -> connected;
-                {error, Error} -> {connecting, Error}
+                {error, Error} -> {connecting, State, Error}
             end;
         {error, _Reason} ->
             connecting
@@ -546,6 +568,7 @@ check_if_healthy_leaders(ClientId, KafkaTopic) ->
 check_topic_status(Hosts, KafkaConfig, KafkaTopic) ->
     CheckTopicFun =
         fun() ->
+            x:show(xxx_check_topic, {Hosts, KafkaConfig, KafkaTopic}),
             wolff_client:check_if_topic_exists(Hosts, KafkaConfig, KafkaTopic)
         end,
     try

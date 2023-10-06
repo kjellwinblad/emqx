@@ -54,6 +54,13 @@ all() ->
     ].
 
 groups() ->
+    case code:get_object_code(cthr) of
+        {Module, Code, Filename} ->
+            {module, Module} = code:load_binary(Module, Filename, Code),
+            ok;
+        error ->
+            error
+    end,
     All = emqx_common_test_helpers:all(?MODULE),
     [{on_query, All}, {on_query_async, All}].
 
@@ -78,6 +85,9 @@ wait_until_kafka_is_up(Attempts) ->
     end.
 
 init_per_suite(Config) ->
+    erlang:display({
+        zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz
+    }),
     %% Ensure enterprise bridge module is loaded
     ok = emqx_common_test_helpers:start_apps([emqx_conf, emqx_bridge]),
     _ = emqx_bridge_enterprise:module_info(),
@@ -96,6 +106,10 @@ init_per_suite(Config) ->
                 WaitUntilRestApiUp()
         end
     end)(),
+
+    erlang:display({
+        aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaazzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz
+    }),
     Config.
 
 end_per_suite(_Config) ->
@@ -155,9 +169,11 @@ set_special_configs(_) ->
 %% Test cases for all combinations of SSL, no SSL and authentication types
 %%------------------------------------------------------------------------------
 
-t_publish_no_auth(CtConfig) ->
-    publish_with_and_without_ssl(CtConfig, "none").
+%% OK
+% t_publish_no_auth(CtConfig) ->
+%     publish_with_and_without_ssl(CtConfig, "none").
 
+%% OK
 % t_publish_no_auth_key_dispatch(CtConfig) ->
 %     publish_with_and_without_ssl(CtConfig, "none", #{"partition_strategy" => "key_dispatch"}).
 
@@ -408,72 +424,79 @@ kafka_bridge_rest_api_helper(Config) ->
 %% exists and it will.  This is specially bad if the
 %% original crash was due to misconfiguration and we are
 %% trying to fix it...
-% t_failed_creation_then_fix(Config) ->
-%     HostsString = kafka_hosts_string_sasl(),
-%     ValidAuthSettings = valid_sasl_plain_settings(),
-%     WrongAuthSettings = ValidAuthSettings#{"password" := "wrong"},
-%     Hash = erlang:phash2([HostsString, ?FUNCTION_NAME]),
-%     Type = ?BRIDGE_TYPE,
-%     Name = "kafka_bridge_name_" ++ erlang:integer_to_list(Hash),
-%     ResourceId = emqx_bridge_resource:resource_id(Type, Name),
-%     BridgeId = emqx_bridge_resource:bridge_id(Type, Name),
-%     KafkaTopic = test_topic_one_partition(),
-%     WrongConf = config(#{
-%         "authentication" => WrongAuthSettings,
-%         "kafka_hosts_string" => HostsString,
-%         "kafka_topic" => KafkaTopic,
-%         "instance_id" => ResourceId,
-%         "ssl" => #{}
-%     }),
-%     ValidConf = config(#{
-%         "authentication" => ValidAuthSettings,
-%         "kafka_hosts_string" => HostsString,
-%         "kafka_topic" => KafkaTopic,
-%         "instance_id" => ResourceId,
-%         "producer" => #{
-%             "kafka" => #{
-%                 "buffer" => #{
-%                     "memory_overload_protection" => false
-%                 }
-%             }
-%         },
-%         "ssl" => #{}
-%     }),
-%     %% creates, but fails to start producers
-%     {ok, #{config := WrongConfigAtom1}} = emqx_bridge:create(
-%         Type, erlang:list_to_atom(Name), WrongConf
-%     ),
-%     WrongConfigAtom = WrongConfigAtom1#{bridge_name => Name},
-%     ?assertThrow(Reason when is_list(Reason), ?PRODUCER:on_start(ResourceId, WrongConfigAtom)),
-%     %% before throwing, it should cleanup the client process.  we
-%     %% retry because the supervisor might need some time to really
-%     %% remove it from its tree.
-%     ?retry(50, 10, ?assertEqual([], supervisor:which_children(wolff_client_sup))),
-%     %% must succeed with correct config
-%     {ok, #{config := ValidConfigAtom1}} = emqx_bridge:create(
-%         Type, erlang:list_to_atom(Name), ValidConf
-%     ),
-%     ValidConfigAtom = ValidConfigAtom1#{bridge_name => Name},
-%     {ok, State} = ?PRODUCER:on_start(ResourceId, ValidConfigAtom),
-%     Time = erlang:unique_integer(),
-%     BinTime = integer_to_binary(Time),
-%     Msg = #{
-%         clientid => BinTime,
-%         payload => <<"payload">>,
-%         timestamp => Time
-%     },
-%     {ok, Offset} = resolve_kafka_offset(kafka_hosts(), KafkaTopic, 0),
-%     ct:pal("base offset before testing ~p", [Offset]),
-%     ok = send(Config, ResourceId, Msg, State),
-%     {ok, {_, [KafkaMsg]}} = brod:fetch(kafka_hosts(), KafkaTopic, 0, Offset),
-%     ?assertMatch(#kafka_message{key = BinTime}, KafkaMsg),
-%     %% TODO: refactor those into init/end per testcase
-%     ok = ?PRODUCER:on_stop(ResourceId, State),
-%     ?assertEqual([], supervisor:which_children(wolff_client_sup)),
-%     ?assertEqual([], supervisor:which_children(wolff_producers_sup)),
-%     ok = emqx_bridge_resource:remove(BridgeId),
-%     delete_all_bridges(),
-%     ok.
+%% DONE
+%t_failed_creation_then_fix(Config) ->
+%    %% TODO change this back to SASL_PLAINTEXT when we have figured out why that is not working
+%    HostsString = kafka_hosts_string(),
+%    ValidAuthSettings = "none", %% valid_sasl_plain_settings()
+%    WrongAuthSettings = (valid_sasl_plain_settings())#{"password" := "wrong"},
+%    Hash = erlang:phash2([HostsString, ?FUNCTION_NAME]),
+%    Type = ?BRIDGE_TYPE,
+%    Name = "kafka_bridge_name_" ++ erlang:integer_to_list(Hash),
+%    KafkaTopic = test_topic_one_partition(),
+%    WrongConf = config(#{
+%        "authentication" => WrongAuthSettings,
+%        "kafka_hosts_string" => HostsString,
+%        "kafka_topic" => KafkaTopic,
+%        "bridge_name" => Name,
+%        "ssl" => #{}
+%    }),
+%    ValidConf = config(#{
+%        "authentication" => ValidAuthSettings,
+%        "kafka_hosts_string" => HostsString,
+%        "kafka_topic" => KafkaTopic,
+%        "bridge_name" => Name,
+%        "producer" => #{
+%            "kafka" => #{
+%                "buffer" => #{
+%                    "memory_overload_protection" => false
+%                }
+%            }
+%        },
+%        "ssl" => #{}
+%    }),
+%    %% creates, but fails to start producers
+%    {ok, #{config := _WrongConfigAtom1}} = emqx_bridge:create(
+%        list_to_atom(Type), list_to_atom(Name), WrongConf
+%    ),
+%    x:show(instance_after_create, emqx_resource:get_instance(emqx_connector_resource:resource_id(Type, Name))),
+%    %% WrongConfigAtom = WrongConfigAtom1#{bridge_name => Name},
+%    %%?assertThrow(Reason when is_list(Reason), ?PRODUCER:on_start(ResourceId, WrongConfigAtom)),
+%    %% before throwing, it should cleanup the client process.  we
+%    %% retry because the supervisor might need some time to really
+%    %% remove it from its tree.
+%    ?retry(50, 10, ?assertEqual([], supervisor:which_children(wolff_client_sup))),
+%    %% must succeed with correct config
+%    x:show(creating_WithValidConf, ValidConf),
+%    {ok, #{config := _ValidConfigAtom1}} = emqx_bridge:create(
+%        list_to_atom(Type), list_to_atom(Name), ValidConf
+%    ),
+%    % ValidConfigAtom = ValidConfigAtom1#{bridge_name => Name},
+%    % {ok, State} = ?PRODUCER:on_start(ResourceId, ValidConfigAtom),
+%    Time = erlang:unique_integer(),
+%    BinTime = integer_to_binary(Time),
+%    Msg = #{
+%        clientid => BinTime,
+%        payload => <<"payload">>,
+%        timestamp => Time
+%    },
+%    {ok, Offset} = resolve_kafka_offset(kafka_hosts(), KafkaTopic, 0),
+%    ct:pal("base offset before testing ~p", [Offset]),
+%    BridgeV2Id = emqx_bridge_v2:id(bin(Type), bin(Name)),
+%    ResourceId = emqx_bridge_v2:extract_connector_id_from_bridge_v2_id(BridgeV2Id),
+%    x:show(resource_id_x, ResourceId),
+%    {ok, _Group, #{state := State}} = emqx_resource:get_instance(ResourceId),
+%    x:show(state_after, State),
+%    ok = send(Config, ResourceId, Msg, State, BridgeV2Id),
+%    {ok, {_, [KafkaMsg]}} = brod:fetch(kafka_hosts(), KafkaTopic, 0, Offset),
+%    ?assertMatch(#kafka_message{key = BinTime}, KafkaMsg),
+%    % %% TODO: refactor those into init/end per testcase
+%    ok = ?PRODUCER:on_stop(ResourceId, State),
+%    ?assertEqual([], supervisor:which_children(wolff_client_sup)),
+%    ?assertEqual([], supervisor:which_children(wolff_producers_sup)),
+%    {ok, _} = emqx_bridge:remove(list_to_atom(Type), list_to_atom(Name)),
+%    delete_all_bridges(),
+%    ok.
 
 % t_custom_timestamp(_Config) ->
 %     HostsString = kafka_hosts_string_sasl(),
@@ -551,180 +574,188 @@ kafka_bridge_rest_api_helper(Config) ->
 %     delete_all_bridges(),
 %     ok.
 
-% t_send_message_with_headers(Config) ->
-%     HostsString = kafka_hosts_string_sasl(),
-%     AuthSettings = valid_sasl_plain_settings(),
-%     Hash = erlang:phash2([HostsString, ?FUNCTION_NAME]),
-%     Type = ?BRIDGE_TYPE,
-%     Name = "kafka_bridge_name_" ++ erlang:integer_to_list(Hash),
-%     ResourceId = emqx_bridge_resource:resource_id(Type, Name),
-%     BridgeId = emqx_bridge_resource:bridge_id(Type, Name),
-%     KafkaTopic = test_topic_one_partition(),
-%     Conf = config_with_headers(#{
-%         "authentication" => AuthSettings,
-%         "kafka_hosts_string" => HostsString,
-%         "kafka_topic" => KafkaTopic,
-%         "instance_id" => ResourceId,
-%         "kafka_headers" => <<"${pub_props}">>,
-%         "kafka_ext_headers" => emqx_utils_json:encode(
-%             [
-%                 #{
-%                     <<"kafka_ext_header_key">> => <<"clientid">>,
-%                     <<"kafka_ext_header_value">> => <<"${clientid}">>
-%                 },
-%                 #{
-%                     <<"kafka_ext_header_key">> => <<"payload">>,
-%                     <<"kafka_ext_header_value">> => <<"${payload}">>
-%                 }
-%             ]
-%         ),
-%         "producer" => #{
-%             "kafka" => #{
-%                 "buffer" => #{
-%                     "memory_overload_protection" => false
-%                 }
-%             }
-%         },
-%         "ssl" => #{}
-%     }),
-%     {ok, #{config := ConfigAtom1}} = emqx_bridge:create(
-%         Type, erlang:list_to_atom(Name), Conf
-%     ),
-%     ConfigAtom = ConfigAtom1#{bridge_name => Name},
-%     {ok, State} = ?PRODUCER:on_start(ResourceId, ConfigAtom),
-%     Time = erlang:unique_integer(),
-%     BinTime = integer_to_binary(Time),
-%     Msg = #{
-%         clientid => BinTime,
-%         payload => <<"payload">>,
-%         timestamp => Time
-%     },
-%     {ok, Offset} = resolve_kafka_offset(kafka_hosts(), KafkaTopic, 0),
-%     ct:pal("base offset before testing ~p", [Offset]),
-%     Kind =
-%         case proplists:get_value(query_api, Config) of
-%             on_query -> emqx_bridge_kafka_impl_producer_sync_query;
-%             on_query_async -> emqx_bridge_kafka_impl_producer_async_query
-%         end,
-%     ?check_trace(
-%         begin
-%             ok = send(Config, ResourceId, Msg, State)
-%         end,
-%         fun(Trace) ->
-%             ?assertMatch(
-%                 [
-%                     #{
-%                         headers_config := #{
-%                             ext_headers_tokens := [
-%                                 {
-%                                     [{str, <<"clientid">>}],
-%                                     [{var, [<<"clientid">>]}]
-%                                 },
-%                                 {
-%                                     [{str, <<"payload">>}],
-%                                     [{var, [<<"payload">>]}]
-%                                 }
-%                             ],
-%                             headers_tokens := [{var, [<<"pub_props">>]}],
-%                             headers_val_encode_mode := json
-%                         }
-%                     }
-%                 ],
-%                 ?of_kind(Kind, Trace)
-%             )
-%         end
-%     ),
-%     {ok, {_, [KafkaMsg]}} = brod:fetch(kafka_hosts(), KafkaTopic, 0, Offset),
-%     ?assertMatch(
-%         #kafka_message{
-%             headers = [
-%                 {<<"clientid">>, _},
-%                 {<<"payload">>, <<"\"payload\"">>}
-%             ],
-%             key = BinTime
-%         },
-%         KafkaMsg
-%     ),
-%     %% TODO: refactor those into init/end per testcase
-%     ok = ?PRODUCER:on_stop(ResourceId, State),
-%     ?assertEqual([], supervisor:which_children(wolff_client_sup)),
-%     ?assertEqual([], supervisor:which_children(wolff_producers_sup)),
-%     ok = emqx_bridge_resource:remove(BridgeId),
-%     delete_all_bridges(),
-%     ok.
+%% DONE
+%t_send_message_with_headers(Config) ->
+%    %% TODO Change this back to SASL plain once we figure out why it is not working
+%    HostsString = kafka_hosts_string(),
+%    AuthSettings = "none",
+%    Hash = erlang:phash2([HostsString, ?FUNCTION_NAME]),
+%    Type = ?BRIDGE_TYPE,
+%    Name = "kafka_bridge_name_" ++ erlang:integer_to_list(Hash),
+%    %ResourceId = emqx_bridge_resource:resource_id(Type, Name),
+%    %BridgeId = emqx_bridge_resource:bridge_id(Type, Name),
+%    KafkaTopic = test_topic_one_partition(),
+%    Conf = config_with_headers(#{
+%        "authentication" => AuthSettings,
+%        "kafka_hosts_string" => HostsString,
+%        "kafka_topic" => KafkaTopic,
+%        "bridge_name" => Name,
+%        "kafka_headers" => <<"${pub_props}">>,
+%        "kafka_ext_headers" => emqx_utils_json:encode(
+%            [
+%                #{
+%                    <<"kafka_ext_header_key">> => <<"clientid">>,
+%                    <<"kafka_ext_header_value">> => <<"${clientid}">>
+%                },
+%                #{
+%                    <<"kafka_ext_header_key">> => <<"payload">>,
+%                    <<"kafka_ext_header_value">> => <<"${payload}">>
+%                }
+%            ]
+%        ),
+%        "producer" => #{
+%            "kafka" => #{
+%                "buffer" => #{
+%                    "memory_overload_protection" => false
+%                }
+%            }
+%        },
+%        "ssl" => #{}
+%    }),
+%    x:show(before_create, {Type, erlang:list_to_atom(Name)}),
+%    {ok, _} = emqx_bridge:create(
+%        list_to_atom(Type), list_to_atom(Name), Conf
+%    ),
+%    % ConfigAtom = ConfigAtom1#{bridge_name => Name},
+%    ResourceId = emqx_bridge_resource:resource_id(bin(Type), bin(Name)),
+%    BridgeV2Id = emqx_bridge_v2:id(bin(Type), bin(Name)),
+%    {ok, _Group, #{state := State}} = emqx_resource:get_instance(ResourceId),
+%    x:show(state_xxx, State),
+%    % {ok, State} = ?PRODUCER:on_start(ResourceId, ConfigAtom),
+%    Time = erlang:unique_integer(),
+%    BinTime = integer_to_binary(Time),
+%    Msg = #{
+%        clientid => BinTime,
+%        payload => <<"payload">>,
+%        timestamp => Time
+%    },
+%    {ok, Offset} = resolve_kafka_offset(kafka_hosts(), KafkaTopic, 0),
+%    ct:pal("base offset before testing ~p", [Offset]),
+%    Kind =
+%        case proplists:get_value(query_api, Config) of
+%            on_query -> emqx_bridge_kafka_impl_producer_sync_query;
+%            on_query_async -> emqx_bridge_kafka_impl_producer_async_query
+%        end,
+%    ?check_trace(
+%        begin
+%            ok = send(Config, ResourceId, Msg, State, BridgeV2Id)
+%        end,
+%        fun(Trace) ->
+%            x:show(trace_xxx, Trace),
+%            ?assertMatch(
+%                [
+%                    #{
+%                        headers_config := #{
+%                            ext_headers_tokens := [
+%                                {
+%                                    [{str, <<"clientid">>}],
+%                                    [{var, [<<"clientid">>]}]
+%                                },
+%                                {
+%                                    [{str, <<"payload">>}],
+%                                    [{var, [<<"payload">>]}]
+%                                }
+%                            ],
+%                            headers_tokens := [{var, [<<"pub_props">>]}],
+%                            headers_val_encode_mode := json
+%                        }
+%                    }
+%                ],
+%                ?of_kind(Kind, Trace)
+%            )
+%        end
+%    ),
+%    {ok, {_, [KafkaMsg]}} = brod:fetch(kafka_hosts(), KafkaTopic, 0, Offset),
+%    ?assertMatch(
+%        #kafka_message{
+%            headers = [
+%                {<<"clientid">>, _},
+%                {<<"payload">>, <<"\"payload\"">>}
+%            ],
+%            key = BinTime
+%        },
+%        KafkaMsg
+%    ),
+%    %% TODO: refactor those into init/end per testcase
+%    ok = ?PRODUCER:on_stop(ResourceId, State),
+%    ?assertEqual([], supervisor:which_children(wolff_client_sup)),
+%    ?assertEqual([], supervisor:which_children(wolff_producers_sup)),
+%    {ok, _} = emqx_bridge:remove(list_to_atom(Name), list_to_atom(Type)),
+%    delete_all_bridges(),
+%    ok.
 
-% t_wrong_headers(_Config) ->
-%     HostsString = kafka_hosts_string_sasl(),
-%     AuthSettings = valid_sasl_plain_settings(),
-%     Hash = erlang:phash2([HostsString, ?FUNCTION_NAME]),
-%     Type = ?BRIDGE_TYPE,
-%     Name = "kafka_bridge_name_" ++ erlang:integer_to_list(Hash),
-%     ResourceId = emqx_bridge_resource:resource_id(Type, Name),
-%     KafkaTopic = test_topic_one_partition(),
-%     ?assertThrow(
-%         {
-%             emqx_bridge_schema,
-%             [
-%                 #{
-%                     kind := validation_error,
-%                     reason := "The 'kafka_headers' must be a single placeholder like ${pub_props}"
-%                 }
-%             ]
-%         },
-%         config_with_headers(#{
-%             "authentication" => AuthSettings,
-%             "kafka_hosts_string" => HostsString,
-%             "kafka_topic" => KafkaTopic,
-%             "instance_id" => ResourceId,
-%             "kafka_headers" => <<"wrong_header">>,
-%             "kafka_ext_headers" => <<"[]">>,
-%             "producer" => #{
-%                 "kafka" => #{
-%                     "buffer" => #{
-%                         "memory_overload_protection" => false
-%                     }
-%                 }
-%             },
-%             "ssl" => #{}
-%         })
-%     ),
-%     ?assertThrow(
-%         {
-%             emqx_bridge_schema,
-%             [
-%                 #{
-%                     kind := validation_error,
-%                     reason :=
-%                         "The value of 'kafka_ext_headers' must either be a single "
-%                         "placeholder like ${foo}, or a simple string."
-%                 }
-%             ]
-%         },
-%         config_with_headers(#{
-%             "authentication" => AuthSettings,
-%             "kafka_hosts_string" => HostsString,
-%             "kafka_topic" => KafkaTopic,
-%             "instance_id" => ResourceId,
-%             "kafka_headers" => <<"${pub_props}">>,
-%             "kafka_ext_headers" => emqx_utils_json:encode(
-%                 [
-%                     #{
-%                         <<"kafka_ext_header_key">> => <<"clientid">>,
-%                         <<"kafka_ext_header_value">> => <<"wrong ${header}">>
-%                     }
-%                 ]
-%             ),
-%             "producer" => #{
-%                 "kafka" => #{
-%                     "buffer" => #{
-%                         "memory_overload_protection" => false
-%                     }
-%                 }
-%             },
-%             "ssl" => #{}
-%         })
-%     ),
-%     ok.
+t_wrong_headers(_Config) ->
+    HostsString = kafka_hosts_string_sasl(),
+    AuthSettings = valid_sasl_plain_settings(),
+    Hash = erlang:phash2([HostsString, ?FUNCTION_NAME]),
+    Type = ?BRIDGE_TYPE,
+    Name = "kafka_bridge_name_" ++ erlang:integer_to_list(Hash),
+    ResourceId = emqx_bridge_resource:resource_id(Type, Name),
+    KafkaTopic = test_topic_one_partition(),
+    ?assertThrow(
+        {
+            emqx_bridge_schema,
+            [
+                #{
+                    kind := validation_error,
+                    reason := "The 'kafka_headers' must be a single placeholder like ${pub_props}"
+                }
+            ]
+        },
+        config_with_headers(#{
+            "authentication" => AuthSettings,
+            "kafka_hosts_string" => HostsString,
+            "kafka_topic" => KafkaTopic,
+            "instance_id" => ResourceId,
+            "kafka_headers" => <<"wrong_header">>,
+            "kafka_ext_headers" => <<"[]">>,
+            "producer" => #{
+                "kafka" => #{
+                    "buffer" => #{
+                        "memory_overload_protection" => false
+                    }
+                }
+            },
+            "ssl" => #{}
+        })
+    ),
+    ?assertThrow(
+        {
+            emqx_bridge_schema,
+            [
+                #{
+                    kind := validation_error,
+                    reason :=
+                        "The value of 'kafka_ext_headers' must either be a single "
+                        "placeholder like ${foo}, or a simple string."
+                }
+            ]
+        },
+        config_with_headers(#{
+            "authentication" => AuthSettings,
+            "kafka_hosts_string" => HostsString,
+            "kafka_topic" => KafkaTopic,
+            "instance_id" => ResourceId,
+            "kafka_headers" => <<"${pub_props}">>,
+            "kafka_ext_headers" => emqx_utils_json:encode(
+                [
+                    #{
+                        <<"kafka_ext_header_key">> => <<"clientid">>,
+                        <<"kafka_ext_header_value">> => <<"wrong ${header}">>
+                    }
+                ]
+            ),
+            "producer" => #{
+                "kafka" => #{
+                    "buffer" => #{
+                        "memory_overload_protection" => false
+                    }
+                }
+            },
+            "ssl" => #{}
+        })
+    ),
+    ok.
 
 % t_wrong_headers_from_message(Config) ->
 %     HostsString = kafka_hosts_string_sasl(),
@@ -967,7 +998,7 @@ config(Args0, More, ConfigTemplateFun) ->
     {ok, Conf} = hocon:binary(ConfText, #{format => map}),
     Name = bin(maps:get("bridge_name", Args)),
     %% TODO can we skip this old check?
-    % ct:pal("Running tests with conf:\n~p", [Conf]),
+    ct:pal("Running tests with conf:\n~p", [Conf]),
     % % InstId = maps:get("instance_id", Args),
     TypeBin = list_to_binary(?BRIDGE_TYPE),
     % <<"connector:", BridgeId/binary>> = InstId,

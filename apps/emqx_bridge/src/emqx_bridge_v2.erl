@@ -539,8 +539,10 @@ split_bridge_v1_config_and_create(BridgeV1Type, BridgeName, RawConf) ->
     case emqx_connector:create(ConnectorType, ConnectorNameAtom, NewConnectorRawConf) of
         {ok, _} ->
             x:show(created_connector, {ConnectorType, ConnectorNameAtom}),
+            x:show(new_bridge_v2_conf, NewBridgeV2RawConf),
             case create(BridgeType, BridgeName, NewBridgeV2RawConf) of
                 {ok, _} = Result ->
+                    x:show(created_bridge_v2_xxx, {BridgeType, BridgeName}),
                     Result;
                 Error ->
                     emqx_connector:remove(ConnectorType, ConnectorNameAtom),
@@ -577,7 +579,8 @@ split_and_validate_bridge_v1_config(BridgeType, BridgeName, RawConf) ->
             ],
             Output
         ),
-    % x:show(xxxxxxxxxxxx_fake_global_config, FakeGlobalConfig),
+    x:show(xxxxxxxxxxxx_fake_global_config, FakeGlobalConfig),
+    x:show(xxxxxxxxxxxx_output, Output),
     ConnectorsBefore =
         maps:keys(
             emqx_utils_maps:deep_get(
@@ -659,6 +662,8 @@ bridge_v1_create_dry_run(BridgeType, RawConfig0) ->
     % TODO once we have implemented the dry-run for channels we should use it here
     ok.
 
+%% NOTE: This function can cause broken references but it is only called from
+%% test cases.
 remove(BridgeType, BridgeName) ->
     ?SLOG(debug, #{
         brige_action => remove,

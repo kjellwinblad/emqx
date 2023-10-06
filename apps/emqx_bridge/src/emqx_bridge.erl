@@ -370,12 +370,22 @@ create(BridgeType, BridgeName, RawConf) ->
             )
     end.
 
+%% NOTE: This function can cause broken references but it is only called from
+%% test cases.
 remove(BridgeType, BridgeName) ->
     ?SLOG(debug, #{
         brige_action => remove,
         bridge_type => BridgeType,
         bridge_name => BridgeName
     }),
+    case emqx_bridge_v2:is_bridge_v2_type(BridgeType) of
+        true ->
+            emqx_bridge_v2:remove(BridgeType, BridgeName);
+        false ->
+            remove_v1(BridgeType, BridgeName)
+    end.
+
+remove_v1(BridgeType, BridgeName) ->
     emqx_conf:remove(
         emqx_bridge:config_key_path() ++ [BridgeType, BridgeName],
         #{override_to => cluster}
