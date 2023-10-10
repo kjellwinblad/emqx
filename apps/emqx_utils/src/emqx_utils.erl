@@ -444,7 +444,6 @@ nolink_apply(Fun, Timeout) when is_function(Fun, 0) ->
                 fun() ->
                     Res =
                         try
-                            x:show(xxxx_before_running_fun),
                             {normal, Fun()}
                         catch
                             C:E:S ->

@@ -117,7 +117,6 @@ on_add_channel(
     BridgeV2Id,
     BridgeV2Config
 ) ->
-    x:show(on_add_channel_xxx, OldState),
     %% The following will throw an exception if the bridge producers fails to start
     {ok, BridgeV2State} = create_producers_for_bridge_v2(
         InstId, BridgeV2Id, ClientId, Hosts, BridgeV2Config
@@ -125,15 +124,7 @@ on_add_channel(
     NewInstalledBridgeV2s = maps:put(BridgeV2Id, BridgeV2State, InstalledBridgeV2s),
     %% Update state
     NewState = OldState#{installed_bridge_v2s => NewInstalledBridgeV2s},
-    {ok, NewState};
-on_add_channel(
-    _InstId,
-    OldState,
-    _BridgeV2Id,
-    _BridgeV2Config
-) ->
-    x:show(on_add_channel_xxx2, OldState),
-    throw(really_fun_clause).
+    {ok, NewState}.
 
 create_producers_for_bridge_v2(
     InstId,
@@ -568,7 +559,6 @@ check_if_healthy_leaders(ClientId, KafkaTopic) ->
 check_topic_status(Hosts, KafkaConfig, KafkaTopic) ->
     CheckTopicFun =
         fun() ->
-            x:show(xxx_check_topic, {Hosts, KafkaConfig, KafkaTopic}),
             wolff_client:check_if_topic_exists(Hosts, KafkaConfig, KafkaTopic)
         end,
     try

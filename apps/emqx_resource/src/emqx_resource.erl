@@ -466,9 +466,7 @@ call_start(ResId, Mod, Config) ->
         %% If the previous manager process crashed without cleaning up
         %% allocated resources, clean them up.
         clean_allocated_resources(ResId, Mod),
-        What = Mod:on_start(ResId, Config),
-        x:show(on_start_result, What),
-        What
+        Mod:on_start(ResId, Config)
     catch
         throw:Error ->
             {error, Error};

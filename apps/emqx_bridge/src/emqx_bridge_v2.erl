@@ -80,6 +80,10 @@
     pre_config_update/3
 ]).
 
+%% On message publish hook
+
+-export([on_message_publish/1]).
+
 -define(ROOT_KEY, bridges_v2).
 
 get_channels_for_connector(ConnectorId) ->
@@ -104,41 +108,11 @@ get_channels_for_connector(ConnectorName, BridgeV2Type) ->
     ].
 
 load() ->
-    % Bridge_V2s = emqx:get_config([?ROOT_KEY], #{}),
-    % lists:foreach(
-    %     fun({Type, NamedConf}) ->
-    %         lists:foreach(
-    %             fun({Name, Conf}) ->
-    %                 install_bridge_v2(
-    %                     Type,
-    %                     Name,
-    %                     Conf
-    %                 )
-    %             end,
-    %             maps:to_list(NamedConf)
-    %         )
-    %     end,
-    %     maps:to_list(Bridge_V2s)
-    % ),
+    load_message_publish_hook(),
     ok.
 
 unload() ->
-    % Bridge_V2s = emqx:get_config([?ROOT_KEY], #{}),
-    % lists:foreach(
-    %     fun({Type, NamedConf}) ->
-    %         lists:foreach(
-    %             fun({Name, Conf}) ->
-    %                 uninstall_bridge_v2(
-    %                     Type,
-    %                     Name,
-    %                     Conf
-    %                 )
-    %             end,
-    %             maps:to_list(NamedConf)
-    %         )
-    %     end,
-    %     maps:to_list(Bridge_V2s)
-    % ),
+    unload_message_publish_hook(),
     ok.
 
 install_bridge_v2(
@@ -146,14 +120,12 @@ install_bridge_v2(
     _BridgeName,
     #{enable := false}
 ) ->
-    erlang:display({skip, "Bridge V2 is disabled"}),
     ok;
 install_bridge_v2(
     BridgeV2Type,
     BridgeName,
     #{connector := ConnectorName} = Config
 ) ->
-    erlang:display({install, BridgeV2Type, BridgeName, ConnectorName}),
     CreationOpts = emqx_resource:fetch_creation_opts(Config),
     BridgeV2Id = id(BridgeV2Type, BridgeName, ConnectorName),
     %% Create metrics for Bridge V2
@@ -184,7 +156,6 @@ uninstall_bridge_v2(
     _BridgeName,
     #{enable := false}
 ) ->
-    erlang:display({skip, "Bridge V2 is disabled"}),
     %% Already not installed
     ok;
 uninstall_bridge_v2(
@@ -192,7 +163,6 @@ uninstall_bridge_v2(
     BridgeName,
     #{connector := ConnectorName} = Config
 ) ->
-    erlang:display({uninstall, BridgeV2Type, BridgeName, ConnectorName}),
     BridgeV2Id = id(BridgeV2Type, BridgeName, ConnectorName),
     CreationOpts = emqx_resource:fetch_creation_opts(Config),
     ok = emqx_resource_buffer_worker_sup:stop_workers(BridgeV2Id, CreationOpts),
@@ -259,7 +229,6 @@ stop(Type, Name) ->
 stop_helper(_Type, _Name, #{enable := false}) ->
     ok;
 stop_helper(BridgeV2Type, BridgeName, #{connector := ConnectorName}) ->
-    erlang:display({stop, BridgeV2Type, BridgeName, ConnectorName}),
     BridgeV2Id = id(BridgeV2Type, BridgeName, ConnectorName),
     ok = emqx_resource:clear_metrics(BridgeV2Id),
     ConnectorId = emqx_connector_resource:resource_id(
@@ -274,7 +243,6 @@ start(Type, Name) ->
 start_helper(_Type, _Name, #{enable := false}) ->
     ok;
 start_helper(BridgeV2Type, BridgeName, #{connector := ConnectorName}) ->
-    erlang:display({start, BridgeV2Type, BridgeName, ConnectorName}),
     BridgeV2Id = id(BridgeV2Type, BridgeName, ConnectorName),
     %% Deinstall from connector
     ConnectorId = emqx_connector_resource:resource_id(
@@ -431,9 +399,7 @@ lookup(Id) ->
 %     Atom.
 
 lookup(Type, Name) ->
-    x:show(all_conf, emqx:get_raw_config([?ROOT_KEY])),
-    x:show(type_name, {Type, Name}),
-    case x:show(emqx:get_raw_config([?ROOT_KEY, Type, Name], not_found)) of
+    case emqx:get_raw_config([?ROOT_KEY, Type, Name], not_found) of
         not_found ->
             {error, bridge_not_found};
         #{<<"connector">> := BridgeConnector} = RawConf ->
@@ -441,10 +407,8 @@ lookup(Type, Name) ->
                 bridge_v2_type_to_connector_type(Type), BridgeConnector
             ),
             InstanceData =
-                case x:show(get_instace, emqx_resource:get_instance(ConnectorId)) of
+                case emqx_resource:get_instance(ConnectorId) of
                     {error, not_found} ->
-                        x:show(ConnectorId),
-                        x:show(instances, emqx_resource:list_instances()),
                         %% TODO should we throw an error here (this should not happen)?
                         {error, not_found};
                     {ok, _, Data} ->
@@ -459,7 +423,6 @@ lookup(Type, Name) ->
     end.
 
 lookup_and_transform_to_bridge_v1(Type, Name) ->
-    x:show(lookup_and_transform_to_bridge_v1, {Type, Name}),
     case lookup(Type, Name) of
         {ok, #{raw_config := #{<<"connector">> := ConnectorName}} = BridgeV2} ->
             ConnectorType = bridge_v2_type_to_connector_type(Type),
@@ -533,16 +496,12 @@ split_bridge_v1_config_and_create(BridgeV1Type, BridgeName, RawConf) ->
         bridge_v2_conf := NewBridgeV2RawConf
     } =
         split_and_validate_bridge_v1_config(BridgeV1Type, BridgeName, RawConf),
-    x:show(split_bridge_v1_config_and_create),
     %% TODO should we really create an atom here?
     ConnectorNameAtom = binary_to_atom(NewConnectorName),
     case emqx_connector:create(ConnectorType, ConnectorNameAtom, NewConnectorRawConf) of
         {ok, _} ->
-            x:show(created_connector, {ConnectorType, ConnectorNameAtom}),
-            x:show(new_bridge_v2_conf, NewBridgeV2RawConf),
             case create(BridgeType, BridgeName, NewBridgeV2RawConf) of
                 {ok, _} = Result ->
-                    x:show(created_bridge_v2_xxx, {BridgeType, BridgeName}),
                     Result;
                 Error ->
                     emqx_connector:remove(ConnectorType, ConnectorNameAtom),
@@ -579,8 +538,6 @@ split_and_validate_bridge_v1_config(BridgeType, BridgeName, RawConf) ->
             ],
             Output
         ),
-    x:show(xxxxxxxxxxxx_fake_global_config, FakeGlobalConfig),
-    x:show(xxxxxxxxxxxx_output, Output),
     ConnectorsBefore =
         maps:keys(
             emqx_utils_maps:deep_get(
@@ -710,7 +667,6 @@ pre_config_update(_, {_Oper, _, _}, undefined) ->
     {error, bridge_not_found};
 pre_config_update(_, {Oper, _Type, _Name}, OldConfig) ->
     %% to save the 'enable' to the config files
-    erlang:display({pre_config_update, Oper, OldConfig}),
     {ok, OldConfig#{<<"enable">> => operation_to_enable(Oper)}};
 pre_config_update(_Path, Conf, _OldConfig) when is_map(Conf) ->
     {ok, Conf}.
@@ -742,20 +698,32 @@ post_config_update([?ROOT_KEY], _Req, NewConf, OldConf, _AppEnv) ->
         },
         #{action => UpdateFun, data => Updated}
     ]),
+    ok = unload_message_publish_hook(),
+    ok = load_message_publish_hook(NewConf),
     ?tp(bridge_post_config_update_done, #{}),
     Result;
 post_config_update([?ROOT_KEY, BridgeType, BridgeName], '$remove', _, _OldConf, _AppEnvs) ->
     Conf = emqx:get_config([?ROOT_KEY, BridgeType, BridgeName]),
     ok = uninstall_bridge_v2(BridgeType, BridgeName, Conf),
+    Bridges = emqx_utils_maps:deep_remove([BridgeType, BridgeName], emqx:get_config([?ROOT_KEY])),
+    reload_message_publish_hook(Bridges),
     ?tp(bridge_post_config_update_done, #{}),
     ok;
 post_config_update([?ROOT_KEY, BridgeType, BridgeName], _Req, NewConf, undefined, _AppEnvs) ->
     ok = install_bridge_v2(BridgeType, BridgeName, NewConf),
+    Bridges = emqx_utils_maps:deep_put(
+        [BridgeType, BridgeName], emqx:get_config([?ROOT_KEY]), NewConf
+    ),
+    reload_message_publish_hook(Bridges),
     ?tp(bridge_post_config_update_done, #{}),
     ok;
 post_config_update([?ROOT_KEY, BridgeType, BridgeName], _Req, NewConf, OldConf, _AppEnvs) ->
     ok = uninstall_bridge_v2(BridgeType, BridgeName, OldConf),
     ok = install_bridge_v2(BridgeType, BridgeName, NewConf),
+    Bridges = emqx_utils_maps:deep_put(
+        [BridgeType, BridgeName], emqx:get_config([?ROOT_KEY]), NewConf
+    ),
+    reload_message_publish_hook(Bridges),
     ?tp(bridge_post_config_update_done, #{}),
     ok.
 
@@ -851,4 +819,106 @@ bridge_v1_id_to_connector_resource_id(BridgeId) ->
                 end,
             ConnectorType = bin(bridge_v2_type_to_connector_type(BridgeV2Type)),
             <<"connector:", ConnectorType/binary, ":", ConnectorName/binary>>
+    end.
+
+%% The following functions are copied from emqx_bridge.erl
+
+reload_message_publish_hook(Bridges) ->
+    ok = unload_message_publish_hook(),
+    ok = load_message_publish_hook(Bridges).
+
+load_message_publish_hook() ->
+    Bridges = emqx:get_config([?ROOT_KEY], #{}),
+    load_message_publish_hook(Bridges).
+
+load_message_publish_hook(Bridges) ->
+    lists:foreach(
+        fun({Type, Bridge}) ->
+            lists:foreach(
+                fun({_Name, BridgeConf}) ->
+                    do_load_message_publish_hook(Type, BridgeConf)
+                end,
+                maps:to_list(Bridge)
+            )
+        end,
+        maps:to_list(Bridges)
+    ).
+
+do_load_message_publish_hook(_Type, #{local_topic := LocalTopic}) when is_binary(LocalTopic) ->
+    emqx_hooks:put('message.publish', {?MODULE, on_message_publish, []}, ?HP_BRIDGE);
+do_load_message_publish_hook(_Type, _Conf) ->
+    ok.
+
+unload_message_publish_hook() ->
+    ok = emqx_hooks:del('message.publish', {?MODULE, on_message_publish}).
+
+on_message_publish(Message = #message{topic = Topic, flags = Flags}) ->
+    case maps:get(sys, Flags, false) of
+        false ->
+            {Msg, _} = emqx_rule_events:eventmsg_publish(Message),
+            send_to_matched_egress_bridges(Topic, Msg);
+        true ->
+            ok
+    end,
+    {ok, Message}.
+
+send_to_matched_egress_bridges(Topic, Msg) ->
+    MatchedBridgeIds = get_matched_egress_bridges(Topic),
+    lists:foreach(
+        fun({Type, Name}) ->
+            try send_message(Type, Name, Msg, #{}) of
+                {error, Reason} ->
+                    ?SLOG(error, #{
+                        msg => "send_message_to_bridge_failed",
+                        bridge_type => Type,
+                        bridge_name => Name,
+                        error => Reason
+                    });
+                _ ->
+                    ok
+            catch
+                Err:Reason:ST ->
+                    ?SLOG(error, #{
+                        msg => "send_message_to_bridge_exception",
+                        bridge_type => Type,
+                        bridge_name => Name,
+                        error => Err,
+                        reason => Reason,
+                        stacktrace => ST
+                    })
+            end
+        end,
+        MatchedBridgeIds
+    ).
+
+get_matched_egress_bridges(Topic) ->
+    Bridges = emqx:get_config([?ROOT_KEY], #{}),
+    maps:fold(
+        fun(BType, Conf, Acc0) ->
+            maps:fold(
+                fun(BName, BConf, Acc1) ->
+                    get_matched_bridge_id(BType, BConf, Topic, BName, Acc1)
+                end,
+                Acc0,
+                Conf
+            )
+        end,
+        [],
+        Bridges
+    ).
+
+get_matched_bridge_id(_BType, #{enable := false}, _Topic, _BName, Acc) ->
+    Acc;
+get_matched_bridge_id(BType, Conf, Topic, BName, Acc) ->
+    case maps:get(local_topic, Conf, undefined) of
+        undefined ->
+            Acc;
+        Filter ->
+            do_get_matched_bridge_id(Topic, Filter, BType, BName, Acc)
+    end.
+
+do_get_matched_bridge_id(Topic, Filter, BType, BName, Acc) ->
+    case emqx_topic:match(Topic, Filter) of
+        true -> [{BType, BName} | Acc];
+        false -> Acc
     end.
