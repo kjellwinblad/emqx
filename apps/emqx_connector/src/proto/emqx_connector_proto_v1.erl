@@ -23,11 +23,9 @@
 
     list_connectors_on_nodes/1,
     restart_connector_to_node/3,
-    start_connector_to_node/3,
     stop_connector_to_node/3,
     lookup_from_all_nodes/3,
     restart_connectors_to_all_nodes/3,
-    start_connectors_to_all_nodes/3,
     stop_connectors_to_all_nodes/3
 ]).
 
@@ -56,17 +54,6 @@ restart_connector_to_node(Node, ConnectorType, ConnectorName) ->
         ?TIMEOUT
     ).
 
--spec start_connector_to_node(node(), key(), key()) ->
-    term().
-start_connector_to_node(Node, ConnectorType, ConnectorName) ->
-    rpc:call(
-        Node,
-        emqx_connector_resource,
-        start,
-        [ConnectorType, ConnectorName],
-        ?TIMEOUT
-    ).
-
 -spec stop_connector_to_node(node(), key(), key()) ->
     term().
 stop_connector_to_node(Node, ConnectorType, ConnectorName) ->
@@ -85,17 +72,6 @@ restart_connectors_to_all_nodes(Nodes, ConnectorType, ConnectorName) ->
         Nodes,
         emqx_connector_resource,
         restart,
-        [ConnectorType, ConnectorName],
-        ?TIMEOUT
-    ).
-
--spec start_connectors_to_all_nodes([node()], key(), key()) ->
-    emqx_rpc:erpc_multicall().
-start_connectors_to_all_nodes(Nodes, ConnectorType, ConnectorName) ->
-    erpc:multicall(
-        Nodes,
-        emqx_connector_resource,
-        start,
         [ConnectorType, ConnectorName],
         ?TIMEOUT
     ).
