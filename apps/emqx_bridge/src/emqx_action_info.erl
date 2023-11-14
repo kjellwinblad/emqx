@@ -77,7 +77,8 @@ hard_coded_action_info_modules_ee() ->
         emqx_bridge_confluent_producer_action_info,
         emqx_bridge_gcp_pubsub_producer_action_info,
         emqx_bridge_kafka_action_info,
-        emqx_bridge_syskeeper_action_info
+        emqx_bridge_syskeeper_action_info,
+        emqx_bridge_pgsql_action_info
     ].
 -else.
 hard_coded_action_info_modules_ee() ->

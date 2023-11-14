@@ -69,7 +69,8 @@ connector_type_to_bridge_types(confluent_producer) -> [confluent_producer];
 connector_type_to_bridge_types(gcp_pubsub_producer) -> [gcp_pubsub_producer];
 connector_type_to_bridge_types(kafka_producer) -> [kafka, kafka_producer];
 connector_type_to_bridge_types(syskeeper_forwarder) -> [syskeeper_forwarder];
-connector_type_to_bridge_types(syskeeper_proxy) -> [].
+connector_type_to_bridge_types(syskeeper_proxy) -> [];
+connector_type_to_bridge_types(pgsql) -> [pgsql].
 
 actions_config_name() -> <<"actions">>.
 
@@ -282,6 +283,7 @@ transform_bridges_v1_to_connectors_and_bridges_v2(RawConfig) ->
         RawConfig,
         ConnectorFields
     ),
+    x:show(new_raw_conf, NewRawConf),
     NewRawConf.
 
 %% v1 uses 'kafka' as bridge type v2 uses 'kafka_producer'
