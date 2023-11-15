@@ -60,7 +60,8 @@ enterprise_fields_connectors() -> [].
 -endif.
 
 connector_type_to_bridge_types(kafka_producer) -> [kafka, kafka_producer];
-connector_type_to_bridge_types(azure_event_hub_producer) -> [azure_event_hub_producer].
+connector_type_to_bridge_types(azure_event_hub_producer) -> [azure_event_hub_producer];
+connector_type_to_bridge_types(pgsql) -> [pgsql].
 
 actions_config_name() -> <<"actions">>.
 

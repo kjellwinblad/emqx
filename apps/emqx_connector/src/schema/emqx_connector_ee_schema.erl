@@ -25,6 +25,8 @@ resource_type(kafka_producer) ->
 %% We use AEH's Kafka interface.
 resource_type(azure_event_hub_producer) ->
     emqx_bridge_kafka_impl_producer;
+resource_type(pgsql) ->
+    emqx_bridge_pgsql_connector;
 resource_type(Type) ->
     error({unknown_connector_type, Type}).
 
@@ -56,6 +58,14 @@ connector_structs() ->
                     desc => <<"Azure Event Hub Connector Config">>,
                     required => false
                 }
+            )},
+        {pgsql,
+            mk(
+                hoconsc:map(name, ref(pgsql, "config_connector")),
+                #{
+                    desc => <<"PostgreSQL Connector Config">>,
+                    required => false
+                }
             )}
     ].
 
@@ -74,7 +84,8 @@ examples(Method) ->
 schema_modules() ->
     [
         emqx_bridge_kafka,
-        emqx_bridge_azure_event_hub
+        emqx_bridge_azure_event_hub,
+        emqx_bridge_pgsql_schema
     ].
 
 api_schemas(Method) ->
@@ -82,7 +93,10 @@ api_schemas(Method) ->
         %% We need to map the `type' field of a request (binary) to a
         %% connector schema module.
         api_ref(emqx_bridge_kafka, <<"kafka_producer">>, Method ++ "_connector"),
-        api_ref(emqx_bridge_azure_event_hub, <<"azure_event_hub_producer">>, Method ++ "_connector")
+        api_ref(
+            emqx_bridge_azure_event_hub, <<"azure_event_hub_producer">>, Method ++ "_connector"
+        ),
+        api_ref(emqx_bridge_pgsql_schema, <<"pgsql">>, Method ++ "_connector")
     ].
 
 api_ref(Module, Type, Method) ->
