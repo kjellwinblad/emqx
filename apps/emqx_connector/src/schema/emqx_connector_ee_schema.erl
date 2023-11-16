@@ -61,7 +61,7 @@ connector_structs() ->
             )},
         {pgsql,
             mk(
-                hoconsc:map(name, ref(pgsql, "config_connector")),
+                hoconsc:map(name, ref(emqx_bridge_pgsql_schema, "config_connector")),
                 #{
                     desc => <<"PostgreSQL Connector Config">>,
                     required => false

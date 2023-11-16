@@ -20,7 +20,7 @@
 -include_lib("emqx/include/logger.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--import(hoconsc, [mk/2, ref/2]).
+-import(hoconsc, [mk/2, ref/2, ref/1]).
 
 -export([roots/0, fields/1, desc/1, namespace/0, tags/0]).
 
@@ -39,6 +39,8 @@
 ]).
 
 -export([types/0, types_sc/0]).
+
+-export([make_action_schema/1]).
 
 -export_type([action_type/0]).
 
@@ -116,11 +118,16 @@ roots() ->
     end.
 
 fields(actions) ->
-    registered_schema_fields().
+    registered_schema_fields();
+fields(resource_opts) ->
+    emqx_resource_schema:create_opts(_Overrides = []).
 
 registered_schema_fields() ->
     [
-        Module:fields(action)
+        begin
+            x:show(module_name, Module),
+            Module:fields(action)
+        end
      || {_BridgeV2Type, Module} <- emqx_action_info:registered_schema_modules()
     ].
 
@@ -149,6 +156,24 @@ examples(Method) ->
         end,
     SchemaModules = [Mod || {_, Mod} <- emqx_action_info:registered_schema_modules()],
     lists:foldl(Fun, #{}, SchemaModules).
+
+%%======================================================================================
+%% Helper functions for making HOCON Schema
+%%======================================================================================
+
+make_action_schema(ActionParametersRef) ->
+    [
+        {enable, mk(boolean(), #{desc => ?DESC("config_enable"), default => true})},
+        {connector,
+            mk(binary(), #{
+                desc => ?DESC(emqx_connector_schema, "connector_field"), required => true
+            })},
+        {description, emqx_schema:description_schema()},
+        {local_topic, mk(binary(), #{required => false, desc => ?DESC(mqtt_topic)})},
+        {parameters, ActionParametersRef},
+        {resource_opts,
+            mk(ref(?MODULE, resource_opts), #{default => #{}, desc => ?DESC(resource_opts)})}
+    ].
 
 -ifdef(TEST).
 -include_lib("hocon/include/hocon_types.hrl").

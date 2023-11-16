@@ -202,11 +202,16 @@ transform_old_style_bridges_to_connector_and_actions_of_type(
                 [<<"bridges">>, to_bin(BridgeType), BridgeName],
                 RawConfigSoFar1
             ),
+            %% Action map should be wrapped under parameters key
+            WrappedActionMap = #{<<"parameters">> => ActionMap},
+            FixedActionMap = emqx_action_info:bridge_v1_to_action_fixup(
+                BridgeType, WrappedActionMap
+            ),
             %% Add action
             RawConfigSoFar3 = emqx_utils_maps:deep_put(
                 [actions_config_name(), to_bin(maybe_rename(BridgeType)), BridgeName],
                 RawConfigSoFar2,
-                ActionMap
+                FixedActionMap
             ),
             RawConfigSoFar3
         end,
@@ -221,6 +226,7 @@ transform_bridges_v1_to_connectors_and_bridges_v2(RawConfig) ->
         RawConfig,
         ConnectorFields
     ),
+    x:show(new_raw_conf, NewRawConf),
     NewRawConf.
 
 %% v1 uses 'kafka' as bridge type v2 uses 'kafka_producer'

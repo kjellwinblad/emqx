@@ -20,11 +20,33 @@
 roots() ->
     [{config, #{type => hoconsc:ref(?MODULE, config)}}].
 
-fields(config) ->
+fields("config_connector") ->
     [{server, server()}] ++
         adjust_fields(emqx_connector_schema_lib:relational_db_fields()) ++
-        emqx_connector_schema_lib:ssl_fields() ++
-        emqx_connector_schema_lib:prepare_statement_fields().
+        emqx_connector_schema_lib:ssl_fields();
+fields(config) ->
+    fields("config_connector") ++
+        fields(action);
+fields(action) ->
+    {pgsql,
+        hoconsc:mk(
+            hoconsc:map(name, hoconsc:ref(emqx_bridge_pgsql_schema, pgsql_action)),
+            #{
+                desc => <<"PostgreSQL Action Config">>,
+                required => false
+            }
+        )};
+fields(action_parameters) ->
+    [
+        {sql,
+            hoconsc:mk(
+                binary(),
+                #{desc => ?DESC("sql_template"), default => default_sql(), format => <<"sql">>}
+            )}
+    ] ++
+        emqx_connector_schema_lib:prepare_statement_fields();
+fields(pgsql_action) ->
+    emqx_bridge_v2_schema:make_action_schema(hoconsc:ref(?MODULE, action_parameters)).
 
 server() ->
     Meta = #{desc => ?DESC("server")},
@@ -42,3 +64,9 @@ adjust_fields(Fields) ->
         end,
         Fields
     ).
+
+default_sql() ->
+    <<
+        "insert into t_mqtt_msg(msgid, topic, qos, payload, arrived) "
+        "values (${id}, ${topic}, ${qos}, ${payload}, TO_TIMESTAMP((${timestamp} :: bigint)/1000))"
+    >>.

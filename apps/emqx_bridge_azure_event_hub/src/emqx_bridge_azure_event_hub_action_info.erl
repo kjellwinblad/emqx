@@ -10,7 +10,8 @@
     bridge_v1_type_name/0,
     action_type_name/0,
     connector_type_name/0,
-    schema_module/0
+    schema_module/0,
+    action_to_bridge_v1_fixup/1
 ]).
 
 bridge_v1_type_name() -> azure_event_hub_producer.
@@ -20,3 +21,14 @@ action_type_name() -> azure_event_hub_producer.
 connector_type_name() -> azure_event_hub_producer.
 
 schema_module() -> emqx_bridge_azure_event_hub.
+
+action_to_bridge_v1_fixup(Config) ->
+    rename(<<"parameters">>, <<"kafka">>, Config).
+
+rename(OldKey, NewKey, Map) ->
+    case maps:find(OldKey, Map) of
+        {ok, Value} ->
+            maps:remove(OldKey, maps:put(NewKey, Value, Map));
+        error ->
+            Map
+    end.
