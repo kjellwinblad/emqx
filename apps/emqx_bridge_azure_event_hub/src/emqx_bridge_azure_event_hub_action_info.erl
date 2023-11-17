@@ -11,7 +11,8 @@
     action_type_name/0,
     connector_type_name/0,
     schema_module/0,
-    action_to_bridge_v1_fixup/1
+    action_to_bridge_v1_fixup/1,
+    bridge_v1_to_action_fixup/1
 ]).
 
 bridge_v1_type_name() -> azure_event_hub_producer.
@@ -32,3 +33,9 @@ rename(OldKey, NewKey, Map) ->
         error ->
             Map
     end.
+
+bridge_v1_to_action_fixup(Config) ->
+    KafkaField = emqx_utils_maps:deep_get([<<"parameters">>, <<"kafka">>], Config, #{}),
+    Config1 = emqx_utils_maps:deep_remove([<<"parameters">>, <<"kafka">>], Config),
+    emqx_utils_maps:deep_merge(Config1, #{<<"parameters">> => KafkaField}).
+

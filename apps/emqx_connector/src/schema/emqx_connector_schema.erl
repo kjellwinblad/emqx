@@ -202,10 +202,15 @@ transform_old_style_bridges_to_connector_and_actions_of_type(
                 [<<"bridges">>, to_bin(BridgeType), BridgeName],
                 RawConfigSoFar1
             ),
+            %% Take fields that should be in the top level of the action map
+            TopLevelFields = [<<"resource_opts">>, <<"enable">>, <<"connector">>],
+            TopLevelActionFields = maps:with(TopLevelFields, ActionMap),
+            ParametersActionFields = maps:without(TopLevelFields, ActionMap),
             %% Action map should be wrapped under parameters key
-            WrappedActionMap = #{<<"parameters">> => ActionMap},
+            WrappedParameters = #{<<"parameters">> => ParametersActionFields},
+            FinalActionMap = maps:merge(TopLevelActionFields, WrappedParameters),
             FixedActionMap = emqx_action_info:bridge_v1_to_action_fixup(
-                BridgeType, WrappedActionMap
+                BridgeType, FinalActionMap
             ),
             %% Add action
             RawConfigSoFar3 = emqx_utils_maps:deep_put(

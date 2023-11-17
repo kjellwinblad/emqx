@@ -13,6 +13,11 @@
 
 -export([roots/0, fields/1]).
 
+%% Examples
+-export([bridge_v2_examples/1,
+         conn_bridge_examples/1,
+         connector_examples/1]).
+
 -define(PGSQL_HOST_OPTIONS, #{
     default_port => ?PGSQL_DEFAULT_PORT
 }).
@@ -46,7 +51,20 @@ fields(action_parameters) ->
     ] ++
         emqx_connector_schema_lib:prepare_statement_fields();
 fields(pgsql_action) ->
-    emqx_bridge_v2_schema:make_action_schema(hoconsc:ref(?MODULE, action_parameters)).
+    emqx_bridge_v2_schema:make_action_schema(hoconsc:ref(?MODULE, action_parameters));
+%% TODO: All of these needs to be fixed
+fields("put_bridge_v2") ->
+    fields(pgsql_action);
+fields("get_bridge_v2") ->
+    fields(pgsql_action);
+fields("post_bridge_v2") ->
+    fields(pgsql_action);
+fields("put_connector") ->
+    fields("config_connector");
+fields("get_connector") ->
+    fields("config_connector");
+fields("post_connector") ->
+    fields("config_connector").
 
 server() ->
     Meta = #{desc => ?DESC("server")},
@@ -70,3 +88,140 @@ default_sql() ->
         "insert into t_mqtt_msg(msgid, topic, qos, payload, arrived) "
         "values (${id}, ${topic}, ${qos}, ${payload}, TO_TIMESTAMP((${timestamp} :: bigint)/1000))"
     >>.
+
+
+%% Examples
+
+connector_examples(Method) ->
+    [
+        #{
+            <<"pgsql">> => #{
+                summary => <<"PostgreSQL Producer Connector">>,
+                value => values({Method, connector})
+            }
+        }
+    ].
+
+bridge_v2_examples(Method) ->
+    [
+        #{
+            <<"pgsql">> => #{
+                summary => <<"PostgreSQL Producer Action">>,
+                value => values({Method, bridge_v2_producer})
+            }
+        }
+    ].
+
+conn_bridge_examples(Method) ->
+    [
+        #{
+            <<"pgsql">> => #{
+                summary => <<"PostgreSQL Producer Bridge">>,
+                value => values({Method, producer})
+            }
+        }
+    ].
+
+%% TODO: All of these needs to be adjusted from Kafka to PostgreSQL
+values({get, PostgreSQLType}) ->
+    maps:merge(
+        #{
+            status => <<"connected">>,
+            node_status => [
+                #{
+                    node => <<"emqx@localhost">>,
+                    status => <<"connected">>
+                }
+            ]
+        },
+        values({post, PostgreSQLType})
+    );
+values({post, connector}) ->
+    maps:merge(
+        #{
+            name => <<"my_pgsql_connector">>,
+            type => <<"pgsql">>
+        },
+        values(common_config)
+    );
+values({post, PostgreSQLType}) ->
+    maps:merge(
+        #{
+            name => <<"my_pgsql_action">>,
+            type => <<"pgsql">>
+        },
+        values({put, PostgreSQLType})
+    );
+values({put, bridge_v2_producer}) ->
+    values(bridge_v2_producer);
+values({put, connector}) ->
+    values(common_config);
+values({put, PostgreSQLType}) ->
+    maps:merge(values(common_config), values(PostgreSQLType));
+values(bridge_v2_producer) ->
+    maps:merge(
+        #{
+            enable => true,
+            connector => <<"my_pgsql_connector">>,
+            resource_opts => #{
+                health_check_interval => "32s"
+            }
+        },
+        values(producer)
+    );
+values(common_config) ->
+    #{
+        authentication => #{
+            mechanism => <<"plain">>,
+            username => <<"username">>,
+            password => <<"******">>
+        },
+        bootstrap_hosts => <<"localhost:9092">>,
+        connect_timeout => <<"5s">>,
+        enable => true,
+        metadata_request_timeout => <<"4s">>,
+        min_metadata_refresh_interval => <<"3s">>,
+        socket_opts => #{
+            sndbuf => <<"1024KB">>,
+            recbuf => <<"1024KB">>,
+            nodelay => true,
+            tcp_keepalive => <<"none">>
+        }
+    };
+values(producer) ->
+    #{
+        kafka => #{
+            topic => <<"kafka-topic">>,
+            message => #{
+                key => <<"${.clientid}">>,
+                value => <<"${.}">>,
+                timestamp => <<"${.timestamp}">>
+            },
+            max_batch_bytes => <<"896KB">>,
+            compression => <<"no_compression">>,
+            partition_strategy => <<"random">>,
+            required_acks => <<"all_isr">>,
+            partition_count_refresh_interval => <<"60s">>,
+            kafka_headers => <<"${pub_props}">>,
+            kafka_ext_headers => [
+                #{
+                    kafka_ext_header_key => <<"clientid">>,
+                    kafka_ext_header_value => <<"${clientid}">>
+                },
+                #{
+                    kafka_ext_header_key => <<"topic">>,
+                    kafka_ext_header_value => <<"${topic}">>
+                }
+            ],
+            kafka_header_value_encode_mode => none,
+            max_inflight => 10,
+            buffer => #{
+                mode => <<"hybrid">>,
+                per_partition_limit => <<"2GB">>,
+                segment_bytes => <<"100MB">>,
+                memory_overload_protection => true
+            }
+        },
+        local_topic => <<"mqtt/local/topic">>
+    }.
+

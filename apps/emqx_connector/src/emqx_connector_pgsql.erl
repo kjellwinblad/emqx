@@ -33,7 +33,11 @@
     on_stop/2,
     on_query/3,
     on_batch_query/3,
-    on_get_status/2
+    on_get_status/2,
+    on_add_channel/4,
+    on_remove_channel/3,
+    on_get_channels/1,
+    on_get_channel_status/3
 ]).
 
 -export([connect/1]).
@@ -109,6 +113,10 @@ on_start(
         ssl := SSL
     } = Config
 ) ->
+    x:show(on_start, #{
+        inst_id => InstId,
+        config => emqx_utils:redact(Config)
+    }),
     #{hostname := Host, port := Port} = emqx_schema:parse_server(Server, ?PGSQL_HOST_OPTIONS),
     ?SLOG(info, #{
         msg => "starting_postgresql_connector",
@@ -138,10 +146,12 @@ on_start(
         {auto_reconnect, ?AUTO_RECONNECT_INTERVAL},
         {pool_size, PoolSize}
     ],
-    State = parse_prepare_sql(Config),
+    State1 = parse_prepare_sql(Config),
+    State2 = State1#{installed_channels => #{}},
     case emqx_resource_pool:start(InstId, ?MODULE, Options ++ SslOpts) of
         ok ->
-            {ok, init_prepare(State#{pool_name => InstId, prepare_statement => #{}})};
+            x:show(successsssssssssssssssssssssssssssss),
+            {ok, init_prepare(State2#{pool_name => InstId, prepare_statement => #{}})};
         {error, Reason} ->
             ?tp(
                 pgsql_connector_start_failed,
@@ -157,13 +167,61 @@ on_stop(InstId, _State) ->
     }),
     emqx_resource_pool:stop(InstId).
 
+on_add_channel(
+    _InstId,
+    #{
+        installed_channels := InstalledChannels
+    } = OldState,
+    ChannelId,
+    ChannelConfig
+) ->
+    %% The following will throw an exception if the bridge producers fails to start
+    {ok, ChannelState} = create_channel_state(OldState, ChannelConfig),
+    NewInstalledChannels = maps:put(ChannelId, ChannelState, InstalledChannels),
+    %% Update state
+    NewState = OldState#{installed_channels => NewInstalledChannels},
+    {ok, x:show(new_state, NewState)}.
+
+create_channel_state(#{pool_name := PoolName} = _ConnectorState,
+                     #{parameters := Parameters} = _ChannelConfig) ->
+    State1 = parse_prepare_sql(Parameters),
+    {ok, init_prepare(State1#{pool_name => PoolName,
+                              prepare_statement => #{}})}.
+
+
+on_remove_channel(
+    _InstId,
+    #{
+        installed_channels := InstalledChannels
+    } = OldState,
+    BridgeV2Id
+) ->
+    NewInstalledChannels = maps:remove(BridgeV2Id, InstalledChannels),
+    %% TODO: do we need to do something more to remove the prepared statements?
+    %% Update state
+    NewState = OldState#{installed_channels => NewInstalledChannels},
+    {ok, NewState}.
+
+on_get_channel_status(
+    _ResId,
+    _ChannelId,
+    _State
+) ->
+    connected.
+
+on_get_channels(ResId) ->
+    emqx_bridge_v2:get_channels_for_connector(ResId).
+
 on_query(InstId, {TypeOrKey, NameOrSQL}, State) ->
+    x:show(on_query_two_params),
     on_query(InstId, {TypeOrKey, NameOrSQL, []}, State);
 on_query(
     InstId,
     {TypeOrKey, NameOrSQL, Params},
     #{pool_name := PoolName} = State
 ) ->
+    x:show(on_query, State),
+    x:show(input, {TypeOrKey, NameOrSQL, Params}),
     ?SLOG(debug, #{
         msg => "postgresql_connector_received_sql_query",
         connector => InstId,
@@ -173,6 +231,7 @@ on_query(
     }),
     Type = pgsql_query_type(TypeOrKey),
     {NameOrSQL2, Data} = proc_sql_params(TypeOrKey, NameOrSQL, Params, State),
+    x:show(name_or_sql, {NameOrSQL2, Data}),
     Res = on_sql_query(InstId, PoolName, Type, NameOrSQL2, Data),
     handle_result(Res).
 
@@ -191,6 +250,7 @@ on_batch_query(
     BatchReq,
     #{pool_name := PoolName, params_tokens := Tokens, prepare_statement := Sts} = State
 ) ->
+    x:show(on_batch_query, State),
     case BatchReq of
         [{Key, _} = Request | _] ->
             BinKey = to_bin(Key),
@@ -380,6 +440,7 @@ query(Conn, SQL, Params) ->
     end.
 
 prepared_query(Conn, Name, Params) ->
+    x:show(before_prepared_query, {Conn, Name, Params}),
     case epgsql:prepared_query2(Conn, Name, Params) of
         {error, sync_required} = Res ->
             ok = epgsql:sync(Conn),

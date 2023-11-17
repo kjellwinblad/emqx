@@ -26,7 +26,7 @@ resource_type(kafka_producer) ->
 resource_type(azure_event_hub_producer) ->
     emqx_bridge_kafka_impl_producer;
 resource_type(pgsql) ->
-    emqx_bridge_pgsql_connector;
+    emqx_connector_pgsql;
 resource_type(Type) ->
     error({unknown_connector_type, Type}).
 

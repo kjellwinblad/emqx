@@ -23,19 +23,5 @@ connector_type_name() -> pgsql.
 schema_module() -> emqx_bridge_pgsql_schema.
 
 bridge_v1_to_action_fixup(Config) ->
-    %% Move sql key to parameters
-    SqlField = maps:get(<<"sql">>, Config),
-    Config1 = maps:remove(<<"sql">>, Config),
-    Config2 =
-        emqx_utils_maps:deep_put([<<"parameters">>, <<"sql">>], Config1, SqlField),
-    %% Move prepare_statement key to parameters if it exists
-    PrepareStatementField = maps:get(<<"prepare_statement">>, Config2, undefined),
-    case PrepareStatementField of
-        undefined ->
-            Config2;
-        _ ->
-            Config3 = maps:remove(<<"prepare_statement">>, Config2),
-            emqx_utils_maps:deep_put(
-                [<<"parameters">>, <<"prepare_statement">>], Config3, PrepareStatementField
-            )
-    end.
+    x:show(fixup_config, Config),
+    Config.
