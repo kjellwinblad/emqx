@@ -283,7 +283,6 @@ transform_bridges_v1_to_connectors_and_bridges_v2(RawConfig) ->
         RawConfig,
         ConnectorFields
     ),
-    x:show(new_raw_conf, NewRawConf),
     NewRawConf.
 
 %% v1 uses 'kafka' as bridge type v2 uses 'kafka_producer'

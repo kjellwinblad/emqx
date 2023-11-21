@@ -54,7 +54,6 @@ fields(action_parameters) ->
     ] ++
         emqx_connector_schema_lib:prepare_statement_fields();
 fields(pgsql_action) ->
-    x:show(emqx_bridge_v2_schema:module_info()),
     emqx_bridge_v2_schema:make_producer_action_schema(hoconsc:ref(?MODULE, action_parameters));
 %% TODO: All of these needs to be fixed
 fields("put_bridge_v2") ->

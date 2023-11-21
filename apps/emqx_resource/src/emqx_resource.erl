@@ -387,6 +387,7 @@ query(ResId, Request, Opts) ->
             emqx_resource_metrics:dropped_resource_stopped_inc(ResId),
             ?RESOURCE_ERROR(unhealthy_target, "unhealthy target");
         {ok, {_, {unhealthy_target, Message}}} ->
+            x:show(unhealthy_target_success, Message),
             emqx_resource_metrics:matched_inc(ResId),
             emqx_resource_metrics:dropped_resource_stopped_inc(ResId),
             ?RESOURCE_ERROR(unhealthy_target, Message);

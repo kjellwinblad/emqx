@@ -238,8 +238,14 @@ send_to_matched_egress_bridges_loop(Topic, Msg, [Id | Ids]) ->
 
 send_message(BridgeId, Message) ->
     {BridgeType, BridgeName} = emqx_bridge_resource:parse_bridge_id(BridgeId),
-    ResId = emqx_bridge_resource:resource_id(BridgeType, BridgeName),
-    send_message(BridgeType, BridgeName, ResId, Message, #{}).
+    case emqx_bridge_v2:is_bridge_v2_type(BridgeType) of
+        false ->
+            ResId = emqx_bridge_resource:resource_id(BridgeType, BridgeName),
+            send_message(BridgeType, BridgeName, ResId, Message, #{});
+        true ->
+            ActionType = emqx_action_info:bridge_v1_type_to_action_type(BridgeType),
+            emqx_bridge_v2:send_message(ActionType, BridgeName, Message, #{})
+    end.
 
 send_message(BridgeType, BridgeName, ResId, Message, QueryOpts0) ->
     case emqx:get_config([?ROOT_KEY, BridgeType, BridgeName], not_found) of
