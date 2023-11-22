@@ -45,7 +45,6 @@ groups() ->
     NonBatchCases = [t_write_timeout],
     BatchVariantGroups = [
         {group, with_batch},
-        %%,
         {group, without_batch}
         % {group, matrix},
         % {group, timescale}
@@ -263,16 +262,10 @@ send_message(Config, Payload) ->
     BridgeID = emqx_bridge_resource:bridge_id(BridgeType, Name),
     emqx_bridge:send_message(BridgeID, Payload).
 
-query_resource(Config, {send_message, Msg} = _Request) ->
-    x:show(rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr),
+query_resource(Config, Msg = _Request) ->
     Name = ?config(pgsql_name, Config),
     BridgeType = ?config(pgsql_bridge_type, Config),
-    emqx_bridge_v2:send_message(BridgeType, Name, Msg, #{timeout => 1_000});
-query_resource(Config, Request) ->
-    Name = ?config(pgsql_name, Config),
-    BridgeType = ?config(pgsql_bridge_type, Config),
-    ResourceID = emqx_bridge_resource:resource_id(BridgeType, Name),
-    emqx_resource:query(ResourceID, Request, #{timeout => 1_000}).
+    emqx_bridge_v2:query(BridgeType, Name, Msg, #{timeout => 1_000}).
 
 query_resource_sync(Config, Request) ->
     Name = ?config(pgsql_name, Config),
@@ -575,7 +568,7 @@ t_write_timeout(Config) ->
     end,
     ok.
 
-skip_t_simple_sql_query(Config) ->
+t_simple_sql_query(Config) ->
     EnableBatch = ?config(enable_batch, Config),
     QueryMode = ?config(query_mode, Config),
     ?assertMatch(

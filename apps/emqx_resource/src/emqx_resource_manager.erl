@@ -342,7 +342,6 @@ get_query_mode_and_last_error(RequestResId, Opts) ->
     do_get_query_mode_error(RequestResId, RequestResId, Opts).
 
 do_get_query_mode_error(ResId, RequestResId, Opts) ->
-    x:show(lookup_cached, ResId),
     case emqx_resource_manager:lookup_cached(ResId) of
         {ok, _Group, ResourceData} ->
             QM = get_query_mode(ResourceData, Opts),

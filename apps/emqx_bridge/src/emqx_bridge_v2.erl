@@ -55,6 +55,7 @@
     disable_enable/3,
     health_check/2,
     send_message/4,
+    query/4,
     start/2,
     reset_metrics/2,
     create_dry_run/2,
@@ -549,25 +550,25 @@ get_query_mode(BridgeV2Type, Config) ->
     ResourceType = emqx_connector_resource:connector_to_resource_type(ConnectorType),
     emqx_resource:query_mode(ResourceType, Config, CreationOpts).
 
--spec send_message(bridge_v2_type(), bridge_v2_name(), Message :: term(), QueryOpts :: map()) ->
+-spec query(bridge_v2_type(), bridge_v2_name(), Message :: term(), QueryOpts :: map()) ->
     term() | {error, term()}.
-send_message(BridgeType, BridgeName, Message, QueryOpts0) ->
+query(BridgeType, BridgeName, Message, QueryOpts0) ->
     case lookup_conf(BridgeType, BridgeName) of
         #{enable := true} = Config0 ->
             Config = combine_connector_and_bridge_v2_config(BridgeType, BridgeName, Config0),
-            do_send_msg_with_enabled_config(BridgeType, BridgeName, Message, QueryOpts0, Config);
+            do_query_with_enabled_config(BridgeType, BridgeName, Message, QueryOpts0, Config);
         #{enable := false} ->
             {error, bridge_stopped};
         _Error ->
             {error, bridge_not_found}
     end.
 
-do_send_msg_with_enabled_config(
+do_query_with_enabled_config(
     _BridgeType, _BridgeName, _Message, _QueryOpts0, {error, Reason} = Error
 ) ->
     ?SLOG(error, Reason),
     Error;
-do_send_msg_with_enabled_config(
+do_query_with_enabled_config(
     BridgeType, BridgeName, Message, QueryOpts0, Config
 ) ->
     QueryMode = get_query_mode(BridgeType, Config),
@@ -581,7 +582,17 @@ do_send_msg_with_enabled_config(
         }
     ),
     BridgeV2Id = id(BridgeType, BridgeName),
-    emqx_resource:query(BridgeV2Id, {BridgeV2Id, Message}, QueryOpts).
+    case Message of
+        {send_message, Msg} ->
+            emqx_resource:query(BridgeV2Id, {BridgeV2Id, Msg}, QueryOpts);
+        Msg ->
+            emqx_resource:query(BridgeV2Id, Msg, QueryOpts)
+    end.
+
+-spec send_message(bridge_v2_type(), bridge_v2_name(), Message :: term(), QueryOpts :: map()) ->
+    term() | {error, term()}.
+send_message(BridgeType, BridgeName, Message, QueryOpts0) ->
+    query(BridgeType, BridgeName, {send_message, Message}, QueryOpts0).
 
 -spec health_check(BridgeType :: term(), BridgeName :: term()) ->
     #{status := emqx_resource:resource_status(), error := term()} | {error, Reason :: term()}.

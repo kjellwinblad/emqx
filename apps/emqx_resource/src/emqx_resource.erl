@@ -413,10 +413,8 @@ query(ResId, Request, Opts) ->
                 ResId, Request, Opts
             );
         {ok, {sync, _}} ->
-            x:show(xxxxxxxxxxx_sync),
             emqx_resource_buffer_worker:sync_query(ResId, Request, Opts);
         {ok, {async, _}} ->
-            x:show(xxxxxxxxxxx_async),
             emqx_resource_buffer_worker:async_query(ResId, Request, Opts)
     end.
 
