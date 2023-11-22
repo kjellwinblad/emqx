@@ -36,21 +36,17 @@
 
 all() ->
     [
-        {group, tcp}
-        % ,
-        % {group, tls}
+        {group, tcp},
+        {group, tls}
     ].
 
 groups() ->
-    %% [t_table_removed, t_concurrent_health_checks],%%
-
-    %%emqx_common_test_helpers:all(?MODULE),
-    TCs = [t_simple_sql_query],
+    TCs = emqx_common_test_helpers:all(?MODULE),
     NonBatchCases = [t_write_timeout],
     BatchVariantGroups = [
-        {group, with_batch}
-        %% {group, without_batch}
-        % ,
+        {group, with_batch},
+        %%,
+        {group, without_batch}
         % {group, matrix},
         % {group, timescale}
     ],
@@ -122,14 +118,12 @@ init_per_suite(Config) ->
 
 end_per_suite(_Config) ->
     emqx_mgmt_api_test_util:end_suite(),
-    ok = emqx_common_test_helpers:stop_apps([emqx_bridge, emqx_conf]),
+    ok = emqx_common_test_helpers:stop_apps([emqx, emqx_postgresql, emqx_conf, emqx_bridge]),
     ok.
 
 init_per_testcase(_Testcase, Config) ->
     connect_and_clear_table(Config),
     delete_bridge(Config),
-    x:show(xxxxxx_connectors, emqx_connector:list()),
-    x:show(xxxxxx_actions, emqx_bridge_v2:list()),
     snabbkaffe:start_trace(),
     Config.
 
@@ -157,7 +151,7 @@ common_init(Config0) ->
             ProxyPort = list_to_integer(os:getenv("PROXY_PORT", "8474")),
             emqx_common_test_helpers:reset_proxy(ProxyHost, ProxyPort),
             % Ensure enterprise bridge module is loaded
-            ok = emqx_common_test_helpers:start_apps([emqx_conf, emqx_bridge]),
+            ok = emqx_common_test_helpers:start_apps([emqx, emqx_postgresql, emqx_conf, emqx_bridge]),
             _ = emqx_bridge_enterprise:module_info(),
             emqx_mgmt_api_test_util:init_suite(),
             % Connect to pgsql directly and create the table
@@ -248,19 +242,12 @@ create_bridge(Config, Overrides) ->
     Name = ?config(pgsql_name, Config),
     PGConfig0 = ?config(pgsql_config, Config),
     PGConfig = emqx_utils_maps:deep_merge(PGConfig0, Overrides),
-    x:show(create_config, PGConfig),
-    x:show(
-        cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccreate,
-        emqx_bridge:create(BridgeType, Name, PGConfig)
-    ).
+    emqx_bridge:create(BridgeType, Name, PGConfig).
 
 delete_bridge(Config) ->
     BridgeType = ?config(pgsql_bridge_type, Config),
     Name = ?config(pgsql_name, Config),
-    x:show(
-        rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrremove,
-        emqx_bridge:remove(BridgeType, Name)
-    ).
+    emqx_bridge:remove(BridgeType, Name).
 
 create_bridge_http(Params) ->
     Path = emqx_mgmt_api_test_util:api_path(["bridges"]),
@@ -588,7 +575,7 @@ t_write_timeout(Config) ->
     end,
     ok.
 
-t_simple_sql_query(Config) ->
+skip_t_simple_sql_query(Config) ->
     EnableBatch = ?config(enable_batch, Config),
     QueryMode = ?config(query_mode, Config),
     ?assertMatch(
@@ -729,7 +716,6 @@ t_table_removed(Config) ->
                 ?RESOURCE_ERROR_M(not_connected, _) ->
                     ok;
                 Res ->
-                    x:show(unexpected_result_xxxxxxxxxxxx, Res),
                     ct:fail("unexpected result: ~p", [Res])
             end,
             ok

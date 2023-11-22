@@ -84,7 +84,6 @@ resource_id(BridgeId) when is_binary(BridgeId) ->
         [Type, _Name] ->
             case emqx_bridge_v2:is_bridge_v2_type(Type) of
                 true ->
-                    x:show(is_v2_type, Type),
                     emqx_bridge_v2:bridge_v1_id_to_connector_resource_id(BridgeId);
                 false ->
                     <<"bridge:", BridgeId/binary>>

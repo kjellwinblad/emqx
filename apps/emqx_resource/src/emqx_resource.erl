@@ -379,11 +379,7 @@ query(ResId, Request) ->
 -spec query(resource_id(), Request :: term(), query_opts()) ->
     Result :: term().
 query(ResId, Request, Opts) ->
-    case
-        x:show(
-            query_mode_last_error, emqx_resource_manager:get_query_mode_and_last_error(ResId, Opts)
-        )
-    of
+    case emqx_resource_manager:get_query_mode_and_last_error(ResId, Opts) of
         {error, _} = ErrorTuple ->
             ErrorTuple;
         {ok, {_, unhealthy_target}} ->
@@ -391,7 +387,6 @@ query(ResId, Request, Opts) ->
             emqx_resource_metrics:dropped_resource_stopped_inc(ResId),
             ?RESOURCE_ERROR(unhealthy_target, "unhealthy target");
         {ok, {_, {unhealthy_target, Message}}} ->
-            x:show(unhealthy_target_success, Message),
             emqx_resource_metrics:matched_inc(ResId),
             emqx_resource_metrics:dropped_resource_stopped_inc(ResId),
             ?RESOURCE_ERROR(unhealthy_target, Message);
@@ -418,8 +413,10 @@ query(ResId, Request, Opts) ->
                 ResId, Request, Opts
             );
         {ok, {sync, _}} ->
+            x:show(xxxxxxxxxxx_sync),
             emqx_resource_buffer_worker:sync_query(ResId, Request, Opts);
         {ok, {async, _}} ->
+            x:show(xxxxxxxxxxx_async),
             emqx_resource_buffer_worker:async_query(ResId, Request, Opts)
     end.
 

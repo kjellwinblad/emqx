@@ -111,10 +111,6 @@ on_start(
         ssl := SSL
     } = Config
 ) ->
-    x:show(on_start, #{
-        inst_id => InstId,
-        config => emqx_utils:redact(Config)
-    }),
     #{hostname := Host, port := Port} = emqx_schema:parse_server(Server, ?PGSQL_HOST_OPTIONS),
     ?SLOG(info, #{
         msg => "starting_postgresql_connector",
@@ -148,7 +144,6 @@ on_start(
     State2 = State1#{installed_channels => #{}},
     case emqx_resource_pool:start(InstId, ?MODULE, Options ++ SslOpts) of
         ok ->
-            x:show(successsssssssssssssssssssssssssssss),
             {ok, init_prepare(State2#{pool_name => InstId, prepares => #{}})};
         {error, Reason} ->
             ?tp(
@@ -199,12 +194,12 @@ on_add_channel(
     {ok, ChannelState} = create_channel_state(ChannelId, OldState, ChannelConfig),
     case ChannelState of
         #{prepares := {error, Reason}} ->
-            x:show(new_state, {error, {unhealthy_target, Reason}});
+            {error, {unhealthy_target, Reason}};
         _ ->
             NewInstalledChannels = maps:put(ChannelId, ChannelState, InstalledChannels),
             %% Update state
             NewState = OldState#{installed_channels => NewInstalledChannels},
-            {ok, x:show(new_state, NewState)}
+            {ok, NewState}
     end.
 
 create_channel_state(
@@ -212,7 +207,6 @@ create_channel_state(
     #{pool_name := PoolName} = _ConnectorState,
     #{parameters := Parameters} = _ChannelConfig
 ) ->
-    x:show(channel_config, _ChannelConfig),
     State1 = parse_prepare_sql(Parameters, ChannelId),
     {ok,
         init_prepare(State1#{
@@ -273,7 +267,6 @@ on_get_channel_status(
         )
     of
         ok ->
-            x:show(channel_status_connected),
             connected;
         {error, undefined_table} ->
             {error, {unhealthy_target, <<"Table does not exist">>}};
@@ -295,15 +288,12 @@ on_get_channels(ResId) ->
     emqx_bridge_v2:get_channels_for_connector(ResId).
 
 on_query(InstId, {TypeOrKey, NameOrSQL}, State) ->
-    x:show(on_query_two_params),
     on_query(InstId, {TypeOrKey, NameOrSQL, []}, State);
 on_query(
     InstId,
     {TypeOrKey, NameOrSQL, Params},
     #{pool_name := PoolName} = State
 ) ->
-    x:show(on_query, State),
-    x:show(input, {TypeOrKey, NameOrSQL, Params}),
     ?SLOG(debug, #{
         msg => "postgresql_connector_received_sql_query",
         connector => InstId,
@@ -313,7 +303,6 @@ on_query(
     }),
     Type = pgsql_query_type(TypeOrKey),
     {NameOrSQL2, Data} = proc_sql_params(TypeOrKey, NameOrSQL, Params, State),
-    x:show(name_or_sql, {NameOrSQL2, Data}),
     Res = on_sql_query(InstId, PoolName, Type, NameOrSQL2, Data),
     handle_result(Res).
 
@@ -330,7 +319,7 @@ pgsql_query_type(_) ->
 on_batch_query(
     InstId,
     [{Key, _} = Request | _] = BatchReq,
-    #{pool_name := PoolName, prepares := PrepStatements} = State
+    #{pool_name := PoolName} = State
 ) ->
     BinKey = to_bin(Key),
     case get_template(BinKey, State) of
@@ -379,7 +368,6 @@ get_template(Key, #{installed_channels := Channels} = _State) when is_map_key(Ke
     BinKey = to_bin(Key),
     ChannelState = maps:get(BinKey, Channels),
     ChannelQueryTemplates = maps:get(query_templates, ChannelState),
-    x:show(channel_state, ChannelState),
     maps:get(BinKey, ChannelQueryTemplates);
 get_template(Key, #{query_templates := Templates}) ->
     BinKey = to_bin(Key),
@@ -391,7 +379,6 @@ get_prepared_statement(Key, #{installed_channels := Channels} = _State) when
     BinKey = to_bin(Key),
     ChannelState = maps:get(BinKey, Channels),
     ChannelPreparedStatements = maps:get(prepares, ChannelState),
-    x:show(channel_state, ChannelState),
     maps:get(BinKey, ChannelPreparedStatements);
 get_prepared_statement(Key, #{prepares := PrepStatements}) ->
     BinKey = to_bin(Key),
@@ -482,7 +469,6 @@ do_check_prepares(
             {error, Reason}
     end;
 do_check_prepares(#{prepares := Prepares}) when is_map(Prepares) ->
-    x:show(status_empty_prepares, Prepares),
     ok;
 do_check_prepares(#{prepares := {error, _}} = State) ->
     %% retry to prepare
@@ -542,7 +528,6 @@ query(Conn, SQL, Params) ->
     end.
 
 prepared_query(Conn, Name, Params) ->
-    x:show(before_prepared_query, {Conn, Name, Params}),
     case epgsql:prepared_query2(Conn, Name, Params) of
         {error, sync_required} = Res ->
             ok = epgsql:sync(Conn),
@@ -662,7 +647,6 @@ prepare_sql_to_conn(Conn, [{Key, {SQL, _RowTemplate}} | Rest], Statements) when 
             prepare_sql_to_conn(Conn, Rest, Statements#{Key => Statement});
         {error, {error, error, _, undefined_table, _, _} = Error} ->
             %% Target table is not created
-            x:show(trace_point_xxx),
             ?tp(pgsql_undefined_table, #{}),
             LogMsg =
                 maps:merge(

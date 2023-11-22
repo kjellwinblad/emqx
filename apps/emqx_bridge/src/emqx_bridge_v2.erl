@@ -581,7 +581,6 @@ do_send_msg_with_enabled_config(
         }
     ),
     BridgeV2Id = id(BridgeType, BridgeName),
-    x:show(query_opts, QueryOpts),
     emqx_resource:query(BridgeV2Id, {BridgeV2Id, Message}, QueryOpts).
 
 -spec health_check(BridgeType :: term(), BridgeName :: term()) ->
@@ -1420,8 +1419,6 @@ bridge_v1_id_to_connector_resource_id(BridgeId) ->
     case binary:split(BridgeId, <<":">>) of
         [Type, Name] ->
             BridgeV2Type = bin(bridge_v1_type_to_bridge_v2_type(Type)),
-            x:show(xlist, list()),
-            x:show(lookup, {BridgeV2Type, Name}),
             ConnectorName =
                 case lookup_conf(BridgeV2Type, Name) of
                     #{connector := Con} ->

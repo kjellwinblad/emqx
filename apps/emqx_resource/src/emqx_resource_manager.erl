@@ -313,7 +313,7 @@ health_check(ResId) ->
 channel_health_check(ResId, ChannelId) ->
     %% Do normal health check first to trigger health checks for channels
     %% and update the cached health status for the channels
-    _ = x:show(normal_health_check, health_check(ResId)),
+    _ = health_check(ResId),
     safe_call(ResId, {channel_health_check, ChannelId}, ?T_OPERATION).
 
 add_channel(ResId, ChannelId, Config) ->
@@ -347,9 +347,6 @@ do_get_query_mode_error(ResId, RequestResId, Opts) ->
         {ok, _Group, ResourceData} ->
             QM = get_query_mode(ResourceData, Opts),
             Error = get_error(RequestResId, ResourceData),
-            x:show({request_res_id, RequestResId}),
-            x:show({the_error, Error}),
-            x:show({the_error_resource_data, ResourceData}),
             {ok, {QM, Error}};
         {error, not_found} ->
             {error, not_found}
@@ -363,7 +360,6 @@ get_query_mode(#{query_mode := QM}, _Opts) ->
 get_error(ResId, #{added_channels := #{} = Channels} = ResourceData) when
     is_map_key(ResId, Channels)
 ->
-    x:show(yes_channel),
     case maps:get(ResId, Channels) of
         #{error := Error} ->
             Error;

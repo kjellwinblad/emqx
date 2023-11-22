@@ -123,6 +123,7 @@ sync_query(Id, Request, Opts0) ->
     PickKey = maps:get(pick_key, Opts, self()),
     Timeout = maps:get(timeout, Opts),
     emqx_resource_metrics:matched_inc(Id),
+    x:show(xxx_opts_sync, Opts),
     pick_call(Id, PickKey, {query, Request, Opts}, Timeout).
 
 -spec async_query(id(), request(), query_opts()) -> Result :: term().
@@ -132,6 +133,7 @@ async_query(Id, Request, Opts0) ->
     Opts = ensure_expire_at(Opts1),
     PickKey = maps:get(pick_key, Opts, self()),
     emqx_resource_metrics:matched_inc(Id),
+    x:show(xxx_opts_async, Opts),
     pick_cast(Id, PickKey, {query, Request, Opts}).
 
 %% simple query the resource without batching and queuing.
