@@ -415,7 +415,7 @@ remove(BridgeType0, BridgeName) ->
     }),
     case emqx_bridge_v2:is_bridge_v2_type(BridgeType) of
         true ->
-            emqx_bridge_v2:remove(BridgeType, BridgeName);
+            emqx_bridge_v2:bridge_v1_remove(BridgeType0, BridgeName);
         false ->
             remove_v1(BridgeType, BridgeName)
     end.

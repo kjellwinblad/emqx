@@ -116,7 +116,9 @@
     bridge_v1_enable_disable/3,
     bridge_v1_restart/2,
     bridge_v1_stop/2,
-    bridge_v1_start/2
+    bridge_v1_start/2,
+    %% For test cases only
+    bridge_v1_remove/2
 ]).
 
 %%====================================================================
@@ -579,6 +581,7 @@ do_send_msg_with_enabled_config(
         }
     ),
     BridgeV2Id = id(BridgeType, BridgeName),
+    x:show(query_opts, QueryOpts),
     emqx_resource:query(BridgeV2Id, {BridgeV2Id, Message}, QueryOpts).
 
 -spec health_check(BridgeType :: term(), BridgeName :: term()) ->
@@ -1317,6 +1320,34 @@ bridge_v1_create_dry_run(BridgeType, RawConfig0) ->
         bridge_v2_conf := BridgeV2RawConf
     } = split_and_validate_bridge_v1_config(BridgeType, TmpName, RawConf, PreviousRawConf),
     create_dry_run_helper(BridgeV2Type, ConnectorRawConf, BridgeV2RawConf).
+
+%% Only called by test cases (may create broken references)
+bridge_v1_remove(BridgeV1Type, BridgeName) ->
+    ActionType = ?MODULE:bridge_v1_type_to_bridge_v2_type(BridgeV1Type),
+    bridge_v1_remove(
+        ActionType,
+        BridgeName,
+        lookup_conf(ActionType, BridgeName)
+    ).
+
+bridge_v1_remove(
+    ActionType,
+    Name,
+    #{connector := ConnectorName}
+) ->
+    case remove(ActionType, Name) of
+        ok ->
+            ConnectorType = connector_type(ActionType),
+            emqx_connector:remove(ConnectorType, ConnectorName);
+        Error ->
+            Error
+    end;
+bridge_v1_remove(
+    _ActionType,
+    _Name,
+    Error
+) ->
+    Error.
 
 bridge_v1_check_deps_and_remove(BridgeV1Type, BridgeName, RemoveDeps) ->
     BridgeV2Type = ?MODULE:bridge_v1_type_to_bridge_v2_type(BridgeV1Type),

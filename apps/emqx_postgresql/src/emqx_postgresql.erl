@@ -158,12 +158,34 @@ on_start(
             {error, Reason}
     end.
 
-on_stop(InstId, _State) ->
+on_stop(InstId, State) ->
     ?SLOG(info, #{
         msg => "stopping_postgresql_connector",
         connector => InstId
     }),
+    close_connections(State),
     emqx_resource_pool:stop(InstId).
+
+close_connections(#{pool_name := PoolName} = _State) ->
+    WorkerPids = [Worker || {_WorkerName, Worker} <- ecpool:workers(PoolName)],
+    close_connections_with_worker_pids(WorkerPids),
+    ok.
+
+close_connections_with_worker_pids([WorkerPid | Rest]) ->
+    %% We ignore errors since any error probably means that the
+    %% connection is closed already.
+    try ecpool_worker:client(WorkerPid) of
+        {ok, Conn} ->
+            _ = epgsql:close(Conn),
+            close_connections_with_worker_pids(Rest);
+        _ ->
+            close_connections_with_worker_pids(Rest)
+    catch
+        _:_ ->
+            close_connections_with_worker_pids(Rest)
+    end;
+close_connections_with_worker_pids([]) ->
+    ok.
 
 on_add_channel(
     _InstId,

@@ -379,7 +379,11 @@ query(ResId, Request) ->
 -spec query(resource_id(), Request :: term(), query_opts()) ->
     Result :: term().
 query(ResId, Request, Opts) ->
-    case emqx_resource_manager:get_query_mode_and_last_error(ResId, Opts) of
+    case
+        x:show(
+            query_mode_last_error, emqx_resource_manager:get_query_mode_and_last_error(ResId, Opts)
+        )
+    of
         {error, _} = ErrorTuple ->
             ErrorTuple;
         {ok, {_, unhealthy_target}} ->

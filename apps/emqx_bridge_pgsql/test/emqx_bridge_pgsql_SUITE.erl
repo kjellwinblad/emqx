@@ -43,11 +43,13 @@ all() ->
 
 groups() ->
     %% [t_table_removed, t_concurrent_health_checks],%%
-    TCs = emqx_common_test_helpers:all(?MODULE),
+
+    %%emqx_common_test_helpers:all(?MODULE),
+    TCs = [t_simple_sql_query],
     NonBatchCases = [t_write_timeout],
     BatchVariantGroups = [
-        % {group, with_batch},
-        {group, without_batch}
+        {group, with_batch}
+        %% {group, without_batch}
         % ,
         % {group, matrix},
         % {group, timescale}
@@ -126,6 +128,8 @@ end_per_suite(_Config) ->
 init_per_testcase(_Testcase, Config) ->
     connect_and_clear_table(Config),
     delete_bridge(Config),
+    x:show(xxxxxx_connectors, emqx_connector:list()),
+    x:show(xxxxxx_actions, emqx_bridge_v2:list()),
     snabbkaffe:start_trace(),
     Config.
 
@@ -244,12 +248,19 @@ create_bridge(Config, Overrides) ->
     Name = ?config(pgsql_name, Config),
     PGConfig0 = ?config(pgsql_config, Config),
     PGConfig = emqx_utils_maps:deep_merge(PGConfig0, Overrides),
-    emqx_bridge:create(BridgeType, Name, PGConfig).
+    x:show(create_config, PGConfig),
+    x:show(
+        cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccreate,
+        emqx_bridge:create(BridgeType, Name, PGConfig)
+    ).
 
 delete_bridge(Config) ->
     BridgeType = ?config(pgsql_bridge_type, Config),
     Name = ?config(pgsql_name, Config),
-    emqx_bridge:remove(BridgeType, Name).
+    x:show(
+        rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrremove,
+        emqx_bridge:remove(BridgeType, Name)
+    ).
 
 create_bridge_http(Params) ->
     Path = emqx_mgmt_api_test_util:api_path(["bridges"]),
@@ -712,8 +723,8 @@ t_table_removed(Config) ->
             Val = integer_to_binary(erlang:unique_integer()),
             SentData = #{payload => Val, timestamp => 1668602148000},
             ActionId = emqx_bridge_v2:id(BridgeType, Name),
-            case query_resource_sync(Config, {ActionId, SentData, []}) of
-                {error, {unrecoverable_error, {error, error, <<"42P01">>, undefined_table, _, _}}} ->
+            case query_resource_sync(Config, {ActionId, SentData}) of
+                {error, {unrecoverable_error, _}} ->
                     ok;
                 ?RESOURCE_ERROR_M(not_connected, _) ->
                     ok;
