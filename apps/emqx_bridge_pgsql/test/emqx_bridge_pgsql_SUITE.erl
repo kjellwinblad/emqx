@@ -46,7 +46,7 @@ groups() ->
     BatchVariantGroups = [
         {group, with_batch},
         {group, without_batch},
-        % {group, matrix},
+        {group, matrix},
         {group, timescale}
     ],
     %%{async, BatchVariantGroups},
