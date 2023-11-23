@@ -1,39 +1,46 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2023 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2020-2023 EMQ Technologies Co., Ltd. All Rights Reserved.
+%%
+%% Licensed under the Apache License, Version 2.0 (the "License");
+%% you may not use this file except in compliance with the License.
+%% You may obtain a copy of the License at
+%%
+%%     http://www.apache.org/licenses/LICENSE-2.0
+%%
+%% Unless required by applicable law or agreed to in writing, software
+%% distributed under the License is distributed on an "AS IS" BASIS,
+%% WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+%% See the License for the specific language governing permissions and
+%% limitations under the License.
 %%--------------------------------------------------------------------
 
--module(emqx_bridge_pgsql_schema).
+-module(emqx_postgresql_connector_schema).
 
--include_lib("emqx_connector/include/emqx_connector.hrl").
--include_lib("emqx_postgresql/include/emqx_postgresql.hrl").
--include_lib("typerefl/include/types.hrl").
--include_lib("emqx/include/logger.hrl").
 -include_lib("hocon/include/hoconsc.hrl").
--include_lib("epgsql/include/epgsql.hrl").
--include_lib("snabbkaffe/include/snabbkaffe.hrl").
-
--export([roots/0, fields/1]).
-
-%% Examples
--export([
-    bridge_v2_examples/1,
-    conn_bridge_examples/1
-]).
-
-%% Exported for timescale and matrix bridges
--export([
-    values/1
-]).
+-include_lib("emqx_postgresql/include/emqx_postgresql.hrl").
 
 -define(PGSQL_HOST_OPTIONS, #{
     default_port => ?PGSQL_DEFAULT_PORT
 }).
 
+-export([
+    roots/0,
+    fields/1
+]).
+
+%% Examples
+-export([
+    connector_examples/1,
+    values/1
+]).
+
 roots() ->
     [{config, #{type => hoconsc:ref(?MODULE, config)}}].
 
 fields("config_connector") ->
-    emqx_postgresql_connector_schema:fields("config_connector");
+    [{server, server()}] ++
+        adjust_fields(emqx_connector_schema_lib:relational_db_fields()) ++
+        emqx_connector_schema_lib:ssl_fields();
 fields(config) ->
     fields("config_connector") ++
         fields(action);
@@ -46,15 +53,6 @@ fields(action) ->
                 required => false
             }
         )};
-fields(action_parameters) ->
-    [
-        {sql,
-            hoconsc:mk(
-                binary(),
-                #{desc => ?DESC("sql_template"), default => default_sql(), format => <<"sql">>}
-            )}
-    ] ++
-        emqx_connector_schema_lib:prepare_statement_fields();
 fields(pgsql_action) ->
     emqx_bridge_v2_schema:make_producer_action_schema(hoconsc:ref(?MODULE, action_parameters));
 %% TODO: All of these needs to be fixed
@@ -63,32 +61,38 @@ fields("put_bridge_v2") ->
 fields("get_bridge_v2") ->
     fields(pgsql_action);
 fields("post_bridge_v2") ->
-    fields(pgsql_action).
+    fields(pgsql_action);
+fields("put_connector") ->
+    fields("config_connector");
+fields("get_connector") ->
+    fields("config_connector");
+fields("post_connector") ->
+    fields("config_connector").
 
-default_sql() ->
-    <<
-        "insert into t_mqtt_msg(msgid, topic, qos, payload, arrived) "
-        "values (${id}, ${topic}, ${qos}, ${payload}, TO_TIMESTAMP((${timestamp} :: bigint)/1000))"
-    >>.
+server() ->
+    Meta = #{desc => ?DESC("server")},
+    emqx_schema:servers_sc(Meta, ?PGSQL_HOST_OPTIONS).
+
+adjust_fields(Fields) ->
+    lists:map(
+        fun
+            ({username, Sc}) ->
+                %% to please dialyzer...
+                Override = #{type => hocon_schema:field_schema(Sc, type), required => true},
+                {username, hocon_schema:override(Sc, Override)};
+            (Field) ->
+                Field
+        end,
+        Fields
+    ).
 
 %% Examples
-
-bridge_v2_examples(Method) ->
+connector_examples(Method) ->
     [
         #{
             <<"pgsql">> => #{
-                summary => <<"PostgreSQL Producer Action">>,
-                value => values({Method, bridge_v2_producer})
-            }
-        }
-    ].
-
-conn_bridge_examples(Method) ->
-    [
-        #{
-            <<"pgsql">> => #{
-                summary => <<"PostgreSQL Producer Bridge">>,
-                value => values({Method, producer})
+                summary => <<"PostgreSQL Producer Connector">>,
+                value => values({Method, connector})
             }
         }
     ].
@@ -107,6 +111,14 @@ values({get, PostgreSQLType}) ->
         },
         values({post, PostgreSQLType})
     );
+values({post, connector}) ->
+    maps:merge(
+        #{
+            name => <<"my_pgsql_connector">>,
+            type => <<"pgsql">>
+        },
+        values(common_config)
+    );
 values({post, PostgreSQLType}) ->
     maps:merge(
         #{
@@ -117,6 +129,8 @@ values({post, PostgreSQLType}) ->
     );
 values({put, bridge_v2_producer}) ->
     values(bridge_v2_producer);
+values({put, connector}) ->
+    values(common_config);
 values({put, PostgreSQLType}) ->
     maps:merge(values(common_config), values(PostgreSQLType));
 values(bridge_v2_producer) ->

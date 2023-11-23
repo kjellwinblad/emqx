@@ -77,7 +77,7 @@ connector_examples(Method) ->
         #{
             <<"timescale">> => #{
                 summary => <<"Timescale Connector">>,
-                value => emqx_bridge_pgsql_schema:values({Method, connector})
+                value => emqx_postgresql_connector_schema:values({Method, connector})
             }
         }
     ].
