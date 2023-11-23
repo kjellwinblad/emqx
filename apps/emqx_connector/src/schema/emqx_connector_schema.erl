@@ -70,7 +70,8 @@ connector_type_to_bridge_types(gcp_pubsub_producer) -> [gcp_pubsub_producer];
 connector_type_to_bridge_types(kafka_producer) -> [kafka, kafka_producer];
 connector_type_to_bridge_types(syskeeper_forwarder) -> [syskeeper_forwarder];
 connector_type_to_bridge_types(syskeeper_proxy) -> [];
-connector_type_to_bridge_types(pgsql) -> [pgsql].
+connector_type_to_bridge_types(pgsql) -> [pgsql];
+connector_type_to_bridge_types(timescale) -> [timescale].
 
 actions_config_name() -> <<"actions">>.
 

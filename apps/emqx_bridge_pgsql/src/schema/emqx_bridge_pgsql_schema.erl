@@ -21,6 +21,11 @@
     connector_examples/1
 ]).
 
+%% Exported for timescale and matrix bridges
+-export([
+    values/1
+]).
+
 -define(PGSQL_HOST_OPTIONS, #{
     default_port => ?PGSQL_DEFAULT_PORT
 }).

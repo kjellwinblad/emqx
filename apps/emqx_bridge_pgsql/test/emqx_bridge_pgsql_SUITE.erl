@@ -45,9 +45,9 @@ groups() ->
     NonBatchCases = [t_write_timeout],
     BatchVariantGroups = [
         {group, with_batch},
-        {group, without_batch}
+        {group, without_batch},
         % {group, matrix},
-        % {group, timescale}
+        {group, timescale}
     ],
     %%{async, BatchVariantGroups},
     QueryModeGroups = [
