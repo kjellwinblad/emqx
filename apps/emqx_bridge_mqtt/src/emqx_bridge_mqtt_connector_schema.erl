@@ -30,6 +30,10 @@
     parse_server/1
 ]).
 
+-export([
+    connector_examples/1
+]).
+
 -import(emqx_schema, [mk_duration/2]).
 
 -import(hoconsc, [mk/2, ref/2]).
@@ -291,7 +295,16 @@ fields("egress_remote") ->
                     desc => ?DESC("payload")
                 }
             )}
-    ].
+    ];
+fields("get_connector") ->
+    fields("config_connector");
+fields("post_connector") ->
+    fields("config_connector");
+fields("put_connector") ->
+    fields("config_connector");
+fields(What) ->
+    x:show(conn_miss, What),
+    erlang:halt().
 
 ingress_pool_size(desc) ->
     ?DESC("ingress_pool_size");
@@ -326,3 +339,6 @@ qos() ->
 parse_server(Str) ->
     #{hostname := Host, port := Port} = emqx_schema:parse_server(Str, ?MQTT_HOST_OPTS),
     {Host, Port}.
+
+connector_examples(_Method) ->
+    [#{}].

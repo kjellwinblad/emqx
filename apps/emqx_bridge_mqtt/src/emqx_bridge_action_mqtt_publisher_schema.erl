@@ -22,6 +22,11 @@
 
 -export([roots/0, fields/1, desc/1, namespace/0]).
 
+-export([
+    bridge_v2_examples/1,
+    conn_bridge_examples/1
+]).
+
 %%======================================================================================
 %% Hocon Schema Definitions
 namespace() -> "bridge_mqtt_publisher".
@@ -38,53 +43,33 @@ fields(action) ->
             }
         )};
 fields("mqtt_publisher_action") ->
-    [
-        {enable, mk(boolean(), #{desc => ?DESC("config_enable_bridge"), default => true})},
-        {connector,
-            mk(binary(), #{
-                desc => ?DESC(emqx_connector_schema, "connector_field"), required => true
-            })},
-        {description, emqx_schema:description_schema()},
-        %% Note: there's an implicit convention in `emqx_bridge' that,
-        %% for egress bridges with this config, the published messages
-        %% will be forwarded to such bridges.
-        {local_topic,
-            mk(
-                binary(),
-                #{
-                    required => false,
-                    desc => ?DESC("config_local_topic"),
-                    importance => ?IMPORTANCE_HIDDEN
-                }
-            )},
-        %% Since e5.3.2, we split the http bridge to two parts: a) connector. b) actions.
-        %% some fields are moved to connector, some fields are moved to actions and composed into the
-        %% `parameters` field.
-        {parameters,
-            hoconsc:mk(hoconsc:ref("parameters_opts"), #{
+    emqx_bridge_v2_schema:make_producer_action_schema(
+        hoconsc:mk(
+            hoconsc:ref(?MODULE, action_parameters),
+            #{
                 required => true,
-                desc => ?DESC("config_parameters_opts")
-            })}
-    ] ++ resource_opts();
-fields("parameters_opts") ->
-    [
-        {path,
-            mk(
-                binary(),
-                #{
-                    desc => ?DESC("config_path"),
-                    required => false
-                }
-            )}
-    ];
+                desc => ?DESC("action_parameters")
+            }
+        )
+    );
+fields(action_parameters) ->
+    emqx_bridge_mqtt_connector_schema:fields("egress");
 fields("resource_opts") ->
     UnsupportedOpts = [enable_batch, batch_size, batch_time],
     lists:filter(
         fun({K, _V}) -> not lists:member(K, UnsupportedOpts) end,
         emqx_resource_schema:fields("creation_opts")
     );
+fields("get_connector") ->
+    emqx_bridge_mqtt_connector_schema:fields("config_connector");
+fields("get_bridge_v2") ->
+    fields("mqtt_publisher_action");
+fields("post_bridge_v2") ->
+    fields("mqtt_publisher_action");
+fields("put_bridge_v2") ->
+    fields("mqtt_publisher_action");
 fields(_What) ->
-    x:show(missing_field, _What),
+    x:show(missing_field_pub, _What),
     erlang:halt().
 %% v2: api schema
 %% The parameter equls to
@@ -108,15 +93,12 @@ desc("parameters_opts") ->
 desc(_) ->
     undefined.
 
-resource_opts() ->
+bridge_v2_examples(_Method) ->
     [
-        {resource_opts,
-            mk(
-                ref(?MODULE, "resource_opts"),
-                #{
-                    required => false,
-                    default => #{},
-                    desc => ?DESC(emqx_resource_schema, <<"resource_opts">>)
-                }
-            )}
+        #{}
+    ].
+
+conn_bridge_examples(_Method) ->
+    [
+        #{}
     ].

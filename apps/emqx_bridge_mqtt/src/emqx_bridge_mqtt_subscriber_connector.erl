@@ -13,7 +13,7 @@
 %% See the License for the specific language governing permissions and
 %% limitations under the License.
 %%--------------------------------------------------------------------
--module(emqx_bridge_mqtt_connector).
+-module(emqx_bridge_mqtt_subscriber_connector).
 
 -include_lib("emqx/include/emqx_mqtt.hrl").
 -include_lib("emqx/include/logger.hrl").
@@ -47,8 +47,7 @@ on_message_received(Msg, HookPoint, ResId) ->
 callback_mode() -> async_if_possible.
 
 on_start(ResourceId, Conf) ->
-    x:show(xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx_start_should_not_happen, Conf),
-    erlang:halt(),
+    x:show(xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx_start, Conf),
     ?SLOG(info, #{
         msg => "starting_mqtt_connector",
         connector => ResourceId,

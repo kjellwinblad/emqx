@@ -81,6 +81,10 @@ connector_impl_module(_ConnectorType) ->
 
 connector_to_resource_type_ce(http) ->
     emqx_bridge_http_connector;
+connector_to_resource_type_ce(mqtt_publisher) ->
+    emqx_bridge_mqtt_publisher_connector;
+connector_to_resource_type_ce(mqtt_subscriber) ->
+    emqx_bridge_mqtt_subscriber_connector;
 connector_to_resource_type_ce(ConnectorType) ->
     error({no_bridge_v2, ConnectorType}).
 
