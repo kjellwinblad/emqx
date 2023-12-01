@@ -1,4 +1,4 @@
-%%--------------------------------------------------------------------
+%%-------------------------------------------------------------------
 %% Copyright (c) 2020-2023 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
@@ -61,6 +61,28 @@ fields("config") ->
                     }
                 )}
         ];
+fields("config_connector") ->
+    [
+        {enable,
+            mk(
+                boolean(),
+                #{
+                    desc => <<"Enable or disable this connector">>,
+                    default => true
+                }
+            )},
+        {description, emqx_schema:description_schema()},
+        {resource_opts,
+            mk(
+                hoconsc:ref(creation_opts),
+                #{
+                    required => false,
+                    desc => ?DESC(emqx_resource_schema, "creation_opts")
+                }
+            )}
+    ] ++ fields("server_configs");
+fields(creation_opts) ->
+    x:show(fields_xxxxxxxxxxxxxx, emqx_connector_schema:resource_opts_fields());
 fields("server_configs") ->
     [
         {mode,

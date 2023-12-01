@@ -1,0 +1,117 @@
+bridges {
+  mqtt {
+    mqtt_pub_and_sub {
+      bridge_mode = false
+      clean_start = true
+      egress {
+        local {topic = "mqtt_pub_and_sub//local/egress"}
+        remote {
+          payload = "${payload}"
+          qos = 1
+          retain = false
+          topic = "mqtt_pub_and_sub/egress"
+        }
+      }
+      enable = true
+      ingress {
+        local {
+          payload = "${payload}"
+          qos = 1
+          retain = false
+          topic = "mqtt_pub_and_sub//local/ingress"
+        }
+        remote {qos = 1, topic = "mqtt_pub_and_sub/ingress"}
+      }
+      keepalive = 300s
+      proto_ver = v4
+      resource_opts {
+        health_check_interval = 15s
+        inflight_window = 100
+        max_buffer_bytes = 1GB
+        query_mode = async
+        request_ttl = 45s
+        start_timeout = 5s
+        worker_pool_size = 4
+      }
+      retry_interval = 15s
+      server = "localhost:1883"
+      ssl {enable = false, verify = verify_peer}
+    }
+    my_publisher_mqtt {
+      bridge_mode = false
+      clean_start = true
+      egress {
+        local {}
+        remote {
+          payload = "${payload}"
+          qos = 1
+          retain = false
+          topic = mqtt_publish_topic
+        }
+      }
+      enable = true
+      keepalive = 300s
+      proto_ver = v4
+      resource_opts {
+        health_check_interval = 15s
+        inflight_window = 100
+        max_buffer_bytes = 1GB
+        query_mode = async
+        request_ttl = 45s
+        start_timeout = 5s
+        worker_pool_size = 4
+      }
+      retry_interval = 15s
+      server = "localhost:1883"
+      ssl {enable = false, verify = verify_peer}
+    }
+    my_subscriber_mqtt {
+      bridge_mode = false
+      clean_start = true
+      enable = true
+      ingress {
+        local {
+          payload = "${payload}"
+          qos = 1
+          retain = false
+          topic = my_local
+        }
+        remote {qos = 1, topic = "my_remote/#"}
+      }
+      keepalive = 300s
+      proto_ver = v4
+      resource_opts {
+        health_check_interval = 15s
+        inflight_window = 100
+        max_buffer_bytes = 1GB
+        query_mode = async
+        request_ttl = 45s
+        start_timeout = 5s
+        worker_pool_size = 4
+      }
+      retry_interval = 15s
+      server = "localhost:1883"
+      ssl {enable = false, verify = verify_peer}
+    }
+  }
+}
+rule_engine {
+  ignore_sys_message = true
+  jq_function_default_timeout = 10s
+  rules {
+    mqtt_ingress_rule {
+      actions = [
+        {function = console}
+      ]
+      description = ""
+      metadata {created_at = 1701348727596}
+      sql = "SELECT\n  *\nFROM\n  \"$bridges/mqtt:my_subscriber_mqtt\""
+    }
+    publish_mqtt_rule {
+      actions = ["mqtt:my_publisher_mqtt"]
+      description = ""
+      metadata {created_at = 1701348884961}
+      sql = "SELECT\n  *\nFROM\n  \"t/#\""
+    }
+  }
+}
