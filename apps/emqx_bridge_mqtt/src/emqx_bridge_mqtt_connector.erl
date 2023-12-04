@@ -29,7 +29,11 @@
     on_stop/2,
     on_query/3,
     on_query_async/4,
-    on_get_status/2
+    on_get_status/2,
+    on_add_channel/4,
+    on_remove_channel/3,
+    on_get_channel_status/3,
+    on_get_channels/1
 ]).
 
 -export([on_async_result/2]).
@@ -48,90 +52,126 @@ callback_mode() -> async_if_possible.
 
 on_start(ResourceId, Conf) ->
     x:show(xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx_start_should_not_happen, Conf),
-    erlang:halt(),
     ?SLOG(info, #{
         msg => "starting_mqtt_connector",
         connector => ResourceId,
         config => emqx_utils:redact(Conf)
     }),
-    case start_ingress(ResourceId, Conf) of
-        {ok, Result1} ->
-            case start_egress(ResourceId, Conf) of
-                {ok, Result2} ->
-                    {ok, maps:merge(Result1, Result2)};
-                {error, Reason} ->
-                    _ = stop_ingress(Result1),
-                    {error, Reason}
-            end;
+    % case start_ingress(ResourceId, Conf) of
+    %     {ok, Result1} ->
+    case start_egress(ResourceId, Conf) of
+        {ok, Result2} ->
+            {ok, Result2#{installed_channels => #{}}};
         {error, Reason} ->
+            % _ = stop_ingress(Result2),
             {error, Reason}
-    end.
+    end
+% {error, Reason} ->
+%     {error, Reason}
+% end
+.
 
-start_ingress(ResourceId, Conf) ->
-    ClientOpts = mk_client_opts(ResourceId, "ingress", Conf),
-    case mk_ingress_config(ResourceId, Conf) of
-        Ingress = #{} ->
-            start_ingress(ResourceId, Ingress, ClientOpts);
-        undefined ->
-            {ok, #{}}
-    end.
-
-start_ingress(ResourceId, Ingress, ClientOpts) ->
-    PoolName = <<ResourceId/binary, ":ingress">>,
-    PoolSize = choose_ingress_pool_size(ResourceId, Ingress),
-    Options = [
-        {name, PoolName},
-        {pool_size, PoolSize},
-        {ingress, Ingress},
-        {client_opts, ClientOpts}
-    ],
-    ok = emqx_resource:allocate_resource(ResourceId, ingress_pool_name, PoolName),
-    case emqx_resource_pool:start(PoolName, emqx_bridge_mqtt_ingress, Options) of
-        ok ->
-            {ok, #{ingress_pool_name => PoolName}};
-        {error, {start_pool_failed, _, Reason}} ->
-            {error, Reason}
-    end.
-
-choose_ingress_pool_size(
-    ResourceId,
-    #{remote := #{topic := RemoteTopic}, pool_size := PoolSize}
+on_add_channel(
+    _InstId,
+    #{
+        installed_channels := InstalledChannels
+    } = OldState,
+    ChannelId,
+    ChannelConfig
 ) ->
-    case emqx_topic:parse(RemoteTopic) of
-        {#share{} = _Filter, _SubOpts} ->
-            % NOTE: this is shared subscription, many workers may subscribe
-            PoolSize;
-        {_Filter, #{}} when PoolSize > 1 ->
-            % NOTE: this is regular subscription, only one worker should subscribe
-            ?SLOG(warning, #{
-                msg => "mqtt_bridge_ingress_pool_size_ignored",
-                connector => ResourceId,
-                reason =>
-                    "Remote topic filter is not a shared subscription, "
-                    "ingress pool will start with a single worker",
-                config_pool_size => PoolSize,
-                pool_size => 1
-            }),
-            1;
-        {_Filter, #{}} when PoolSize == 1 ->
-            1
-    end.
+    x:show(on_add_channel, ChannelConfig),
+    ChannelState = maps:get(parameters, ChannelConfig),
+    NewInstalledChannels = maps:put(ChannelId, ChannelState, InstalledChannels),
+    %% Update state
+    NewState = OldState#{installed_channels => NewInstalledChannels},
+    {ok, NewState}.
+
+on_remove_channel(
+    _InstId,
+    #{
+        installed_channels := InstalledChannels
+    } = OldState,
+    ChannelId
+) ->
+    NewInstalledChannels = maps:remove(ChannelId, InstalledChannels),
+    %% Update state
+    NewState = OldState#{installed_channels => NewInstalledChannels},
+    {ok, NewState}.
+
+on_get_channel_status(
+    _ResId,
+    ChannelId,
+    #{
+        installed_channels := Channels
+    } = _State
+) when is_map_key(ChannelId, Channels) ->
+    x:show(prudcer_status_connected, ChannelId),
+    connected.
+
+on_get_channels(ResId) ->
+    emqx_bridge_v2:get_channels_for_connector(ResId).
+
+% start_ingress(ResourceId, Conf) ->
+%     ClientOpts = mk_client_opts(ResourceId, "ingress", Conf),
+%     case mk_ingress_config(ResourceId, Conf) of
+%         Ingress = #{} ->
+%             start_ingress(ResourceId, Ingress, ClientOpts);
+%         undefined ->
+%             {ok, #{}}
+%     end.
+
+% start_ingress(ResourceId, Ingress, ClientOpts) ->
+%     PoolName = <<ResourceId/binary, ":ingress">>,
+%     PoolSize = choose_ingress_pool_size(ResourceId, Ingress),
+%     Options = [
+%         {name, PoolName},
+%         {pool_size, PoolSize},
+%         {ingress, Ingress},
+%         {client_opts, ClientOpts}
+%     ],
+%     ok = emqx_resource:allocate_resource(ResourceId, ingress_pool_name, PoolName),
+%     case emqx_resource_pool:start(PoolName, emqx_bridge_mqtt_ingress, Options) of
+%         ok ->
+%             {ok, #{ingress_pool_name => PoolName}};
+%         {error, {start_pool_failed, _, Reason}} ->
+%             {error, Reason}
+%     end.
+
+% choose_ingress_pool_size(
+%     ResourceId,
+%     #{remote := #{topic := RemoteTopic}, pool_size := PoolSize}
+% ) ->
+%     case emqx_topic:parse(RemoteTopic) of
+%         {#share{} = _Filter, _SubOpts} ->
+%             % NOTE: this is shared subscription, many workers may subscribe
+%             PoolSize;
+%         {_Filter, #{}} when PoolSize > 1 ->
+%             % NOTE: this is regular subscription, only one worker should subscribe
+%             ?SLOG(warning, #{
+%                 msg => "mqtt_bridge_ingress_pool_size_ignored",
+%                 connector => ResourceId,
+%                 reason =>
+%                     "Remote topic filter is not a shared subscription, "
+%                     "ingress pool will start with a single worker",
+%                 config_pool_size => PoolSize,
+%                 pool_size => 1
+%             }),
+%             1;
+%         {_Filter, #{}} when PoolSize == 1 ->
+%             1
+%     end.
 
 start_egress(ResourceId, Conf) ->
     % NOTE
     % We are ignoring the user configuration here because there's currently no reliable way
     % to ensure proper session recovery according to the MQTT spec.
-    ClientOpts = maps:put(clean_start, true, mk_client_opts(ResourceId, "egress", Conf)),
-    case mk_egress_config(Conf) of
-        Egress = #{} ->
-            start_egress(ResourceId, Egress, ClientOpts);
-        undefined ->
-            {ok, #{}}
-    end.
+    ClientOpts0 = emqx_bridge_mqtt_common:mk_client_opts(ResourceId, "egress", Conf),
+    ClientOpts = maps:put(clean_start, true, ClientOpts0),
+    start_egress(ResourceId, Conf, ClientOpts).
 
-start_egress(ResourceId, Egress, ClientOpts) ->
+start_egress(ResourceId, Conf, ClientOpts) ->
     PoolName = <<ResourceId/binary, ":egress">>,
-    PoolSize = maps:get(pool_size, Egress),
+    PoolSize = maps:get(pool_size, Conf),
     Options = [
         {name, PoolName},
         {pool_size, PoolSize},
@@ -141,8 +181,7 @@ start_egress(ResourceId, Egress, ClientOpts) ->
     case emqx_resource_pool:start(PoolName, emqx_bridge_mqtt_egress, Options) of
         ok ->
             {ok, #{
-                egress_pool_name => PoolName,
-                egress_config => emqx_bridge_mqtt_egress:config(Egress)
+                egress_pool_name => PoolName
             }};
         {error, {start_pool_failed, _, Reason}} ->
             {error, Reason}
@@ -280,74 +319,74 @@ combine_status(Statuses) ->
             disconnected
     end.
 
-mk_ingress_config(
-    ResourceId,
-    #{
-        ingress := Ingress = #{remote := _},
-        server := Server,
-        hookpoint := HookPoint
-    }
-) ->
-    Ingress#{
-        server => Server,
-        on_message_received => {?MODULE, on_message_received, [HookPoint, ResourceId]}
-    };
-mk_ingress_config(ResourceId, #{ingress := #{remote := _}} = Conf) ->
-    error({no_hookpoint_provided, ResourceId, Conf});
-mk_ingress_config(_ResourceId, #{}) ->
-    undefined.
+% mk_ingress_config(
+%     ResourceId,
+%     #{
+%         ingress := Ingress = #{remote := _},
+%         server := Server,
+%         hookpoint := HookPoint
+%     }
+% ) ->
+%     Ingress#{
+%         server => Server,
+%         on_message_received => {?MODULE, on_message_received, [HookPoint, ResourceId]}
+%     };
+% mk_ingress_config(ResourceId, #{ingress := #{remote := _}} = Conf) ->
+%     error({no_hookpoint_provided, ResourceId, Conf});
+% mk_ingress_config(_ResourceId, #{}) ->
+%     undefined.
 
-mk_egress_config(#{egress := Egress = #{remote := _}}) ->
-    Egress;
-mk_egress_config(#{}) ->
-    undefined.
+% mk_egress_config(#{egress := Egress = #{remote := _}}) ->
+%     Egress;
+% mk_egress_config(#{}) ->
+%     undefined.
 
-mk_client_opts(
-    ResourceId,
-    ClientScope,
-    Config = #{
-        server := Server,
-        keepalive := KeepAlive,
-        ssl := #{enable := EnableSsl} = Ssl
-    }
-) ->
-    HostPort = emqx_bridge_mqtt_connector_schema:parse_server(Server),
-    Options = maps:with(
-        [
-            proto_ver,
-            username,
-            password,
-            clean_start,
-            retry_interval,
-            max_inflight,
-            % Opening a connection in bridge mode will form a non-standard mqtt connection message.
-            % A load balancing server (such as haproxy) is often set up before the emqx broker server.
-            % When the load balancing server enables mqtt connection packet inspection,
-            % non-standard mqtt connection packets might be filtered out by LB.
-            bridge_mode
-        ],
-        Config
-    ),
-    mk_client_opt_password(Options#{
-        hosts => [HostPort],
-        clientid => clientid(ResourceId, ClientScope, Config),
-        connect_timeout => 30,
-        keepalive => ms_to_s(KeepAlive),
-        force_ping => true,
-        ssl => EnableSsl,
-        ssl_opts => maps:to_list(maps:remove(enable, Ssl))
-    }).
+% mk_client_opts(
+%     ResourceId,
+%     ClientScope,
+%     Config = #{
+%         server := Server,
+%         keepalive := KeepAlive,
+%         ssl := #{enable := EnableSsl} = Ssl
+%     }
+% ) ->
+%     HostPort = emqx_bridge_mqtt_connector_schema:parse_server(Server),
+%     Options = maps:with(
+%         [
+%             proto_ver,
+%             username,
+%             password,
+%             clean_start,
+%             retry_interval,
+%             max_inflight,
+%             % Opening a connection in bridge mode will form a non-standard mqtt connection message.
+%             % A load balancing server (such as haproxy) is often set up before the emqx broker server.
+%             % When the load balancing server enables mqtt connection packet inspection,
+%             % non-standard mqtt connection packets might be filtered out by LB.
+%             bridge_mode
+%         ],
+%         Config
+%     ),
+%     mk_client_opt_password(Options#{
+%         hosts => [HostPort],
+%         clientid => clientid(ResourceId, ClientScope, Config),
+%         connect_timeout => 30,
+%         keepalive => ms_to_s(KeepAlive),
+%         force_ping => true,
+%         ssl => EnableSsl,
+%         ssl_opts => maps:to_list(maps:remove(enable, Ssl))
+%     }).
 
-mk_client_opt_password(Options = #{password := Secret}) ->
-    %% TODO: Teach `emqtt` to accept 0-arity closures as passwords.
-    Options#{password := emqx_secret:unwrap(Secret)};
-mk_client_opt_password(Options) ->
-    Options.
+% mk_client_opt_password(Options = #{password := Secret}) ->
+%     %% TODO: Teach `emqtt` to accept 0-arity closures as passwords.
+%     Options#{password := emqx_secret:unwrap(Secret)};
+% mk_client_opt_password(Options) ->
+%     Options.
 
-ms_to_s(Ms) ->
-    erlang:ceil(Ms / 1000).
+% ms_to_s(Ms) ->
+%     erlang:ceil(Ms / 1000).
 
-clientid(Id, ClientScope, _Conf = #{clientid_prefix := Prefix}) when is_binary(Prefix) ->
-    iolist_to_binary([Prefix, ":", Id, ":", ClientScope, ":", atom_to_list(node())]);
-clientid(Id, ClientScope, _Conf) ->
-    iolist_to_binary([Id, ":", ClientScope, ":", atom_to_list(node())]).
+% clientid(Id, ClientScope, _Conf = #{clientid_prefix := Prefix}) when is_binary(Prefix) ->
+%     iolist_to_binary([Prefix, ":", Id, ":", ClientScope, ":", atom_to_list(node())]);
+% clientid(Id, ClientScope, _Conf) ->
+%     iolist_to_binary([Id, ":", ClientScope, ":", atom_to_list(node())]).

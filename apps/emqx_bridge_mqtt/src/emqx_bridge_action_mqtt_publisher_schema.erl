@@ -53,7 +53,8 @@ fields("mqtt_publisher_action") ->
         )
     );
 fields(action_parameters) ->
-    emqx_bridge_mqtt_connector_schema:fields("egress");
+    Fields = emqx_bridge_mqtt_connector_schema:fields("egress"),
+    proplists:delete(pool_size, Fields);
 fields("resource_opts") ->
     UnsupportedOpts = [enable_batch, batch_size, batch_time],
     lists:filter(

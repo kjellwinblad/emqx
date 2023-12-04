@@ -83,7 +83,8 @@ fields("config_connector") ->
                     required => false,
                     desc => ?DESC(emqx_resource_schema, "creation_opts")
                 }
-            )}
+            )},
+        {pool_size, fun egress_pool_size/1}
     ] ++ fields("server_configs");
 fields(creation_opts) ->
     x:show(fields_xxxxxxxxxxxxxx, emqx_connector_schema:resource_opts_fields());

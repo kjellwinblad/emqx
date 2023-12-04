@@ -17,9 +17,9 @@
 
 bridge_v1_type_name() -> mqtt.
 
-action_type_name() -> mqtt_publisher.
+action_type_name() -> mqtt.
 
-connector_type_name() -> mqtt_publisher.
+connector_type_name() -> mqtt.
 
 schema_module() -> emqx_bridge_action_mqtt_publisher_schema.
 
