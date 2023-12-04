@@ -63,6 +63,7 @@ render(
         retain := RetainToken
     } = Vars
 ) ->
+    x:show(render, {Msg, Vars}),
     #{
         topic => render_string(TopicToken, Msg),
         payload => render_payload(Vars, Msg),
@@ -74,8 +75,10 @@ render_payload(From, MapMsg) ->
     do_render_payload(maps:get(payload, From, undefined), MapMsg).
 
 do_render_payload(undefined, Msg) ->
+    x:show(do_render_undefiend),
     emqx_utils_json:encode(Msg);
 do_render_payload(Tks, Msg) ->
+    x:show(do_render_tokens),
     render_string(Tks, Msg).
 
 %% Replace a string contains vars to another string in which the placeholders are replace by the

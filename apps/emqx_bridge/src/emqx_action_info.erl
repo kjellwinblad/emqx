@@ -93,8 +93,7 @@ hard_coded_action_info_modules_ee() ->
 hard_coded_action_info_modules_common() ->
     [
         emqx_bridge_http_action_info,
-        emqx_bridge_mqtt_publisher_action_info,
-        emqx_bridge_mqtt_subscriber_action_info
+        emqx_bridge_mqtt_publisher_action_info
     ].
 
 hard_coded_action_info_modules() ->

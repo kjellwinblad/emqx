@@ -78,8 +78,8 @@ api_schemas(Method) ->
         %% We need to map the `type' field of a request (binary) to a
         %% connector schema module.
         api_ref(emqx_bridge_http_schema, <<"http">>, Method ++ "_connector"),
-        api_ref(emqx_bridge_mqtt_connector_schema, <<"mqtt_subscriber">>, Method ++ "_connector"),
-        api_ref(emqx_bridge_mqtt_connector_schema, <<"mqtt_publisher">>, Method ++ "_connector")
+        % api_ref(emqx_bridge_mqtt_connector_schema, <<"mqtt_subscriber">>, Method ++ "_connector"),
+        api_ref(emqx_bridge_mqtt_connector_schema, <<"mqtt">>, Method ++ "_connector")
     ].
 
 api_ref(Module, Type, Method) ->
@@ -122,10 +122,10 @@ connector_type_to_bridge_types(matrix) ->
     [matrix];
 connector_type_to_bridge_types(mongodb) ->
     [mongodb, mongodb_rs, mongodb_sharded, mongodb_single];
-connector_type_to_bridge_types(mqtt_subscriber) ->
-    [mqtt, mqtt_subscriber];
-connector_type_to_bridge_types(mqtt_publisher) ->
-    [mqtt, mqtt_publisher];
+% connector_type_to_bridge_types(mqtt_subscriber) ->
+%     [mqtt, mqtt_subscriber];
+connector_type_to_bridge_types(mqtt) ->
+    [mqtt];
 connector_type_to_bridge_types(pgsql) ->
     [pgsql];
 connector_type_to_bridge_types(syskeeper_forwarder) ->
@@ -457,22 +457,22 @@ fields(connectors) ->
                     required => false
                 }
             )},
-        {mqtt_publisher,
+        {mqtt,
             mk(
                 hoconsc:map(name, ref(emqx_bridge_mqtt_connector_schema, "config_connector")),
                 #{
                     desc => <<"MQTT Publisher Connector Config">>,
                     required => false
                 }
-            )},
-        {mqtt_subscriber,
-            mk(
-                hoconsc:map(name, ref(emqx_bridge_mqtt_connector_schema, "config_connector")),
-                #{
-                    desc => <<"MQTT Subscriber Connector Config">>,
-                    required => false
-                }
             )}
+        % {mqtt_subscriber,
+        %     mk(
+        %         hoconsc:map(name, ref(emqx_bridge_mqtt_connector_schema, "config_connector")),
+        %         #{
+        %             desc => <<"MQTT Subscriber Connector Config">>,
+        %             required => false
+        %         }
+        %     )}
     ] ++ enterprise_fields_connectors();
 fields("node_status") ->
     [

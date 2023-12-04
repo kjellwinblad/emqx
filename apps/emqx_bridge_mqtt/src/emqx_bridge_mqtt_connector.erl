@@ -80,7 +80,8 @@ on_add_channel(
     ChannelConfig
 ) ->
     x:show(on_add_channel, ChannelConfig),
-    ChannelState = maps:get(parameters, ChannelConfig),
+    ChannelState0 = maps:get(parameters, ChannelConfig),
+    ChannelState = emqx_bridge_mqtt_egress:config(ChannelState0),
     NewInstalledChannels = maps:put(ChannelId, ChannelState, InstalledChannels),
     %% Update state
     NewState = OldState#{installed_channels => NewInstalledChannels},
@@ -208,11 +209,29 @@ stop_egress(#{}) ->
 
 on_query(
     ResourceId,
-    {send_message, Msg},
-    #{egress_pool_name := PoolName, egress_config := Config}
+    {ChannelId, Msg},
+    #{egress_pool_name := PoolName} = State
 ) ->
-    ?TRACE("QUERY", "send_msg_to_remote_node", #{message => Msg, connector => ResourceId}),
-    handle_send_result(with_egress_client(PoolName, send, [Msg, Config]));
+    ?TRACE(
+        "QUERY",
+        "send_msg_to_remote_node",
+        #{
+            message => Msg,
+            connector => ResourceId,
+            channel_id => ChannelId
+        }
+    ),
+    x:show(we_are_here),
+    Channels = maps:get(installed_channels, State),
+    ChannelConfig = maps:get(ChannelId, Channels),
+    handle_send_result(with_egress_client(PoolName, send, [Msg, ChannelConfig]));
+% on_query(
+%     ResourceId,
+%     {send_message, Msg},
+%     #{egress_pool_name := PoolName, egress_config := Config}
+% ) ->
+%     ?TRACE("QUERY", "send_msg_to_remote_node", #{message => Msg, connector => ResourceId}),
+%     handle_send_result(with_egress_client(PoolName, send, [Msg, Config]));
 on_query(ResourceId, {send_message, Msg}, #{}) ->
     ?SLOG(error, #{
         msg => "forwarding_unavailable",
@@ -223,13 +242,15 @@ on_query(ResourceId, {send_message, Msg}, #{}) ->
 
 on_query_async(
     ResourceId,
-    {send_message, Msg},
+    {ChannelId, Msg},
     CallbackIn,
-    #{egress_pool_name := PoolName, egress_config := Config}
+    #{egress_pool_name := PoolName} = State
 ) ->
     ?TRACE("QUERY", "async_send_msg_to_remote_node", #{message => Msg, connector => ResourceId}),
     Callback = {fun on_async_result/2, [CallbackIn]},
-    Result = with_egress_client(PoolName, send_async, [Msg, Callback, Config]),
+    Channels = maps:get(installed_channels, State),
+    ChannelConfig = maps:get(ChannelId, Channels),
+    Result = with_egress_client(PoolName, send_async, [Msg, Callback, ChannelConfig]),
     case Result of
         ok ->
             ok;
@@ -238,6 +259,23 @@ on_query_async(
         {error, Reason} ->
             {error, classify_error(Reason)}
     end;
+% on_query_async(
+%     ResourceId,
+%     {send_message, Msg},
+%     CallbackIn,
+%     #{egress_pool_name := PoolName, egress_config := Config}
+% ) ->
+%     ?TRACE("QUERY", "async_send_msg_to_remote_node", #{message => Msg, connector => ResourceId}),
+%     Callback = {fun on_async_result/2, [CallbackIn]},
+%     Result = with_egress_client(PoolName, send_async, [Msg, Callback, Config]),
+%     case Result of
+%         ok ->
+%             ok;
+%         {ok, Pid} when is_pid(Pid) ->
+%             {ok, Pid};
+%         {error, Reason} ->
+%             {error, classify_error(Reason)}
+%     end;
 on_query_async(ResourceId, {send_message, Msg}, _Callback, #{}) ->
     ?SLOG(error, #{
         msg => "forwarding_unavailable",
