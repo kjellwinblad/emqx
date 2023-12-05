@@ -386,16 +386,35 @@ install_bridge_v2_helper(
     ConnectorId = emqx_connector_resource:resource_id(
         connector_type(BridgeV2Type), ConnectorName
     ),
-    ConfigWithTypeAndName = Config#{
-        bridge_type => bin(BridgeV2Type),
-        bridge_name => bin(BridgeName)
-    },
     emqx_resource_manager:add_channel(
         ConnectorId,
         BridgeV2Id,
-        ConfigWithTypeAndName
+        augment_channel_config(
+            BridgeV2Type,
+            BridgeName,
+            Config
+        )
     ),
     ok.
+
+augment_channel_config(
+    BridgeV2Type,
+    BridgeName,
+    Config
+) ->
+    x:show(is_ingress, emqx_action_info:is_ingress(BridgeV2Type)),
+    AugmentedConf = Config#{
+        bridge_type => bin(BridgeV2Type),
+        bridge_name => bin(BridgeName)
+    },
+    case emqx_action_info:is_ingress(BridgeV2Type) of
+        true ->
+            BId = emqx_bridge_resource:bridge_id(BridgeV2Type, BridgeName),
+            BridgeHookpoint = emqx_bridge_resource:bridge_hookpoint(BId),
+            x:show(aug_conf, AugmentedConf#{hookpoint => BridgeHookpoint});
+        false ->
+            AugmentedConf
+    end.
 
 uninstall_bridge_v2(
     _BridgeType,
@@ -650,13 +669,12 @@ create_dry_run_helper(BridgeType, ConnectorRawConf, BridgeV2RawConf) ->
             {_, ConnectorName} = emqx_connector_resource:parse_connector_id(ConnectorId),
             ChannelTestId = id(BridgeType, BridgeName, ConnectorName),
             Conf = emqx_utils_maps:unsafe_atom_key_map(BridgeV2RawConf),
-            ConfWithTypeAndName = Conf#{
-                bridge_type => bin(BridgeType),
-                bridge_name => bin(BridgeName)
-            },
-            case
-                emqx_resource_manager:add_channel(ConnectorId, ChannelTestId, ConfWithTypeAndName)
-            of
+            AugmentedConf = augment_channel_config(
+                BridgeType,
+                BridgeName,
+                Conf
+            ),
+            case emqx_resource_manager:add_channel(ConnectorId, ChannelTestId, AugmentedConf) of
                 {error, Reason} ->
                     {error, Reason};
                 ok ->
@@ -820,10 +838,10 @@ get_channels_for_connector(ConnectorId) ->
 get_channels_for_connector(ConnectorName, BridgeV2Type) ->
     BridgeV2s = emqx:get_config([?ROOT_KEY, BridgeV2Type], #{}),
     [
-        {id(BridgeV2Type, Name, ConnectorName), Conf#{
-            bridge_name => bin(Name),
-            bridge_type => bin(BridgeV2Type)
-        }}
+        {
+            id(BridgeV2Type, Name, ConnectorName),
+            augment_channel_config(BridgeV2Type, Name, Conf)
+        }
      || {Name, Conf} <- maps:to_list(BridgeV2s),
         bin(ConnectorName) =:= maps:get(connector, Conf, no_name)
     ].

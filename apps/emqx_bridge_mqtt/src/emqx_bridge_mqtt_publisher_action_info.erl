@@ -36,16 +36,15 @@ bridge_v1_config_to_connector_config_helper(
     x:show(before_transform_egress, Config),
     ConnectorConfigMap = make_connector_config_from_bridge_v1_config(Config),
     x:show(after_transform_egress, ConnectorConfigMap),
+    {ConnectorConfigMap, mqtt};
+bridge_v1_config_to_connector_config_helper(
+    #{
+        <<"ingress">> := _IngressMap
+    } = Config
+) ->
+    x:show(before_transform_ingress, Config),
+    ConnectorConfigMap = make_connector_config_from_bridge_v1_config(Config),
     {ConnectorConfigMap, mqtt}.
-% ;
-% bridge_v1_config_to_connector_config_helper(
-%     #{
-%         <<"ingress">> := _IngressMap
-%     } = Config
-% ) ->
-%     x:show(before_transform_ingress, Config),
-%     ConnectorConfigMap = make_connector_config_from_bridge_v1_config(Config),
-%     {ConnectorConfigMap, mqtt_subscriber}.
 
 make_connector_config_from_bridge_v1_config(Config) ->
     ConnectorConfigSchema = emqx_bridge_mqtt_connector_schema:fields("config_connector"),
@@ -83,22 +82,28 @@ bridge_v1_config_to_action_config_helper(
     ),
     %% Add parameters field (Egress map) to the action config
     ConfigMap2 = maps:put(<<"parameters">>, EgressMap, ConfigMap1),
-    {ConfigMap2, mqtt}.
-% bridge_v1_config_to_action_config_helper(
-%     #{
-%         <<"ingress">> := IngressMap
-%     } = Config,
-%     ConnectorName
-% ) ->
-%     %% Transform the egress part to mqtt_publisher connector config
-%     SchemaFields = emqx_bridge_action_mqtt_publisher_schema:fields("mqtt_publisher_action"),
-%     ResourceOptsSchemaFields = emqx_bridge_action_mqtt_publisher_schema:fields("resource_opts"),
-%     ConfigMap1 = general_action_conf_map_from_bridge_v1_config(
-%         Config, ConnectorName, SchemaFields, ResourceOptsSchemaFields
-%     ),
-%     %% Add parameters field to the action config
-%     ConfigMap2 = maps:put(<<"parameters">>, IngressMap, ConfigMap1),
-%     {ConfigMap2, mqtt_subscriber}.
+    ConfigMap3 = emqx_utils_maps:deep_put(
+        [<<"parameters">>, <<"direction">>], ConfigMap2, <<"publisher">>
+    ),
+    {ConfigMap3, mqtt};
+bridge_v1_config_to_action_config_helper(
+    #{
+        <<"ingress">> := IngressMap
+    } = Config,
+    ConnectorName
+) ->
+    %% Transform the egress part to mqtt_publisher connector config
+    SchemaFields = emqx_bridge_action_mqtt_publisher_schema:fields("mqtt_publisher_action"),
+    ResourceOptsSchemaFields = emqx_bridge_action_mqtt_publisher_schema:fields("resource_opts"),
+    ConfigMap1 = general_action_conf_map_from_bridge_v1_config(
+        Config, ConnectorName, SchemaFields, ResourceOptsSchemaFields
+    ),
+    %% Add parameters field to the action config
+    ConfigMap2 = maps:put(<<"parameters">>, IngressMap, ConfigMap1),
+    ConfigMap3 = emqx_utils_maps:deep_put(
+        [<<"parameters">>, <<"direction">>], ConfigMap2, <<"subscriber">>
+    ),
+    {ConfigMap3, mqtt}.
 
 general_action_conf_map_from_bridge_v1_config(
     Config, ConnectorName, SchemaFields, ResourceOptsSchemaFields

@@ -25,6 +25,7 @@
     action_type_to_bridge_v1_type/2,
     bridge_v1_type_to_action_type/1,
     is_action_type/1,
+    is_ingress/1,
     registered_schema_modules/0,
     connector_action_config_to_bridge_v1_config/3,
     has_custom_connector_action_config_to_bridge_v1_config/1,
@@ -57,12 +58,15 @@
 %% implementation and do some adjustments on the result.
 -callback bridge_v1_config_to_action_config(BridgeV1Config :: map(), ConnectorName :: binary()) ->
     map() | {map(), ActionTypeName :: atom()}.
+-callback is_ingress() ->
+    boolean().
 
 -optional_callbacks([
     bridge_v1_type_name/0,
     connector_action_config_to_bridge_v1_config/2,
     bridge_v1_config_to_connector_config/1,
-    bridge_v1_config_to_action_config/2
+    bridge_v1_config_to_action_config/2,
+    is_ingress/0
 ]).
 
 %% ====================================================================
@@ -153,6 +157,17 @@ get_confs(_, _) ->
 is_action_type(Bin) when is_binary(Bin) ->
     is_action_type(binary_to_existing_atom(Bin));
 is_action_type(Type) ->
+    ActionInfoMap = info_map(),
+    ActionTypes = maps:get(action_type_names, ActionInfoMap),
+    case maps:get(Type, ActionTypes, undefined) of
+        undefined -> false;
+        _ -> true
+    end.
+
+%% Returns true if the action is an ingress action, false otherwise.
+is_ingress(Bin) when is_binary(Bin) ->
+    is_ingress(binary_to_existing_atom(Bin));
+is_ingress(Type) ->
     ActionInfoMap = info_map(),
     ActionTypes = maps:get(action_type_names, ActionInfoMap),
     case maps:get(Type, ActionTypes, undefined) of
@@ -257,7 +272,8 @@ initial_info_map() ->
         action_type_to_bridge_v1_type => #{},
         action_type_to_connector_type => #{},
         action_type_to_schema_module => #{},
-        action_type_to_info_module => #{}
+        action_type_to_info_module => #{},
+        is_ingress => #{}
     }.
 
 get_info_map(Module) ->
@@ -275,6 +291,13 @@ get_info_map(Module) ->
                 end;
             false ->
                 {ActionType, [ActionType]}
+        end,
+    IsIngress =
+        case erlang:function_exported(Module, is_ingress, 0) of
+            true ->
+                Module:is_ingress();
+            false ->
+                false
         end,
     #{
         action_type_names =>
@@ -315,5 +338,8 @@ get_info_map(Module) ->
                 end,
                 #{ActionType => Module},
                 BridgeV1Types
-            )
+            ),
+        is_ingress => #{
+            ActionType => IsIngress
+        }
     }.

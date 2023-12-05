@@ -77,11 +77,32 @@ on_add_channel(
         installed_channels := InstalledChannels
     } = OldState,
     ChannelId,
-    ChannelConfig
+    #{parameters := #{direction := publisher}} = ChannelConfig
 ) ->
     x:show(on_add_channel, ChannelConfig),
     ChannelState0 = maps:get(parameters, ChannelConfig),
     ChannelState = emqx_bridge_mqtt_egress:config(ChannelState0),
+    NewInstalledChannels = maps:put(ChannelId, ChannelState, InstalledChannels),
+    %% Update state
+    NewState = OldState#{installed_channels => NewInstalledChannels},
+    {ok, NewState};
+on_add_channel(
+    _InstId,
+    #{
+        installed_channels := InstalledChannels
+    } = OldState,
+    ChannelId,
+    #{
+        parameters := #{direction := subscriber},
+        hookpoint := HookPoint
+    } = ChannelConfig
+) ->
+    x:show(on_add_channel_subscriber, ChannelConfig),
+    ChannelState0 = maps:get(parameters, ChannelConfig),
+    ChannelState = ChannelState0#{
+        on_message_received =>
+            {?MODULE, on_message_received, [HookPoint, ChannelId]}
+    },
     NewInstalledChannels = maps:put(ChannelId, ChannelState, InstalledChannels),
     %% Update state
     NewState = OldState#{installed_channels => NewInstalledChannels},

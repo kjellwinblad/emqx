@@ -84,7 +84,17 @@ fields("config_connector") ->
                     desc => ?DESC(emqx_resource_schema, "creation_opts")
                 }
             )},
-        {pool_size, fun egress_pool_size/1}
+        {pool_size, fun egress_pool_size/1},
+        {ingress,
+            mk(
+                hoconsc:array(
+                    hoconsc:ref(connector_ingress)
+                ),
+                #{
+                    required => {false, recursively},
+                    desc => ?DESC("ingress_desc")
+                }
+            )}
     ] ++ fields("server_configs");
 fields(creation_opts) ->
     x:show(fields_xxxxxxxxxxxxxx, emqx_connector_schema:resource_opts_fields());
@@ -158,6 +168,7 @@ fields("server_configs") ->
 fields("ingress") ->
     [
         {pool_size, fun ingress_pool_size/1},
+        %% array
         {remote,
             mk(
                 ref(?MODULE, "ingress_remote"),
@@ -168,6 +179,22 @@ fields("ingress") ->
                 ref(?MODULE, "ingress_local"),
                 #{
                     desc => ?DESC("ingress_local")
+                }
+            )}
+    ];
+fields(connector_ingress) ->
+    [
+        {remote,
+            mk(
+                ref(?MODULE, "ingress_remote"),
+                #{desc => ?DESC("ingress_remote")}
+            )},
+        {local,
+            mk(
+                ref(?MODULE, "ingress_local"),
+                #{
+                    desc => ?DESC("ingress_local"),
+                    importance => ?IMPORTANCE_HIDDEN
                 }
             )}
     ];
