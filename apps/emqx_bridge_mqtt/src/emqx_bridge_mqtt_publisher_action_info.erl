@@ -12,7 +12,8 @@
     connector_type_name/0,
     schema_module/0,
     bridge_v1_config_to_connector_config/1,
-    bridge_v1_config_to_action_config/2
+    bridge_v1_config_to_action_config/2,
+    connector_action_config_to_bridge_v1_config/2
 ]).
 
 bridge_v1_type_name() -> mqtt.
@@ -151,9 +152,28 @@ check_and_simplify_bridge_v1_config(SimplifiedConfig) ->
 connector_action_config_to_bridge_v1_config(
     ConnectorConfig, ActionConfig
 ) ->
-    ConnectorConfig2 = maps:without(ConnectorConfig, [<<"resource_opts">>, <<"connector">>]),
-    ActionConfig2 = maps:without(ActionConfig, [<<"resource_opts">>, <<"connector">>]),
-    #{
-        <<"egress">> := ConnectorConfig2,
-        <<"ingress">> := ActionConfig2
-    }.
+    x:show(org_con_conf, ConnectorConfig),
+    x:show(org_act_conf, ActionConfig),
+    Params = maps:get(<<"parameters">>, ActionConfig, #{}),
+    ResourceOptsConnector = maps:get(<<"resource_opts">>, ConnectorConfig, #{}),
+    ResourceOptsAction = maps:get(<<"resource_opts">>, ActionConfig, #{}),
+    ResourceOpts = maps:merge(ResourceOptsConnector, ResourceOptsAction),
+    %% Check the direction of the action
+    Direction = maps:get(<<"direction">>, Params, <<"publisher">>),
+    Parms2 = maps:remove(<<"direction">>, Params),
+    PoolSize = maps:get(<<"pool_size">>, ConnectorConfig, 1),
+    Parms3 = maps:put(<<"pool_size">>, PoolSize, Parms2),
+    ConnectorConfig2 = maps:remove(<<"pool_size">>, ConnectorConfig),
+    BridgeV1Conf0 =
+        case Direction of
+            <<"publisher">> ->
+                #{<<"egress">> => Parms3};
+            <<"subscriber">> ->
+                #{<<"ingress">> => Parms3}
+        end,
+    BridgeV1Conf1 = maps:merge(BridgeV1Conf0, ConnectorConfig2),
+    BridgeV1Conf2 = BridgeV1Conf1#{
+        <<"resource_opts">> => ResourceOpts
+    },
+    x:show(merged_conf, BridgeV1Conf2),
+    BridgeV1Conf2.

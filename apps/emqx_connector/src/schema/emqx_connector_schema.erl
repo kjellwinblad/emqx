@@ -376,6 +376,7 @@ transform_old_style_bridges_to_connector_and_actions_of_type(
     ).
 
 transform_bridges_v1_to_connectors_and_bridges_v2(RawConfig) ->
+    x:show(raw_before_transform, RawConfig),
     ConnectorFields = ?MODULE:fields(connectors),
     NewRawConf = lists:foldl(
         fun transform_old_style_bridges_to_connector_and_actions_of_type/2,
