@@ -17,6 +17,7 @@
 -module(emqx_bridge_mqtt_ingress).
 
 -include_lib("emqx/include/logger.hrl").
+-include_lib("emqx/include/emqx_mqtt.hrl").
 
 -behaviour(ecpool_worker).
 
@@ -54,17 +55,25 @@
 -spec connect([option() | {ecpool_worker_id, pos_integer()}]) ->
     {ok, pid()} | {error, _Reason}.
 connect(Options) ->
+    x:show(connect, Options),
+    WorkerId = proplists:get_value(ecpool_worker_id, Options),
+    x:show(worker_id, WorkerId),
+    IsFirstWorker = WorkerId =:= 1,
     ?SLOG(debug, #{
         msg => "ingress_client_starting",
         options => emqx_utils:redact(Options)
     }),
     Name = proplists:get_value(name, Options),
     WorkerId = proplists:get_value(ecpool_worker_id, Options),
-    Ingress = config(proplists:get_value(ingress, Options), Name),
+    IngressOptions = proplists:get_value(ingress, Options),
+    PoolSize = maps:get(pool_size, IngressOptions),
+    Ingress = config(IngressOptions, Name),
     ClientOpts = proplists:get_value(client_opts, Options),
-    case emqtt:start_link(mk_client_opts(Name, WorkerId, Ingress, ClientOpts)) of
+    case
+        emqtt:start_link(x:show(sub_with_opts, mk_client_opts(Name, WorkerId, Ingress, ClientOpts)))
+    of
         {ok, Pid} ->
-            connect(Pid, Name, Ingress);
+            connect(Pid, Name, Ingress, IsFirstWorker, PoolSize);
         {error, Reason} = Error ->
             ?SLOG(error, #{
                 msg => "client_start_failed",
@@ -98,13 +107,22 @@ mk_client_event_handler(Name, Ingress = #{}) ->
         disconnected => {fun ?MODULE:handle_disconnect/1, []}
     }.
 
--spec connect(pid(), name(), ingress()) ->
+-spec connect(pid(), name(), ingress(), IsFirstWorker :: boolean(), PoolSize :: non_neg_integer()) ->
     {ok, pid()} | {error, _Reason}.
-connect(Pid, Name, Ingress) ->
+connect(Pid, Name, Ingress, IsFirstWorker, PoolSize) ->
+    x:show(connect_3, Ingress),
     case emqtt:connect(Pid) of
         {ok, _Props} ->
-            case subscribe_remote_topic(Pid, Ingress) of
-                {ok, _, _RCs} ->
+            IngressList = maps:get(ingress_list, Ingress, []),
+            x:show(fucking_name, Name),
+            %erlang:halt(),
+            SubscribeResults = subscribe_remote_topics(
+                Pid, IngressList, IsFirstWorker, PoolSize, Name
+            ),
+            %% Find error if any using proplists:get_value/2
+            case proplists:get_value(error, SubscribeResults, ok) of
+                ok ->
+                    x:show(subscribe_connect),
                     {ok, Pid};
                 {error, Reason} = Error ->
                     ?SLOG(error, #{
@@ -126,14 +144,52 @@ connect(Pid, Name, Ingress) ->
             Error
     end.
 
-subscribe_remote_topic(Pid, #{remote := #{topic := RemoteTopic, qos := QoS}}) ->
-    emqtt:subscribe(Pid, RemoteTopic, QoS).
+subscribe_remote_topics(Pid, IngressList, IsFirstWorker, PoolSize, Name) ->
+    x:show(subscribe_remote_topics_2, IngressList),
+    [subscribe_remote_topic(Pid, Ingress, IsFirstWorker, PoolSize, Name) || Ingress <- IngressList].
+
+subscribe_remote_topic(
+    Pid, #{remote := #{topic := RemoteTopic, qos := QoS}} = Remote, IsFirstWorker, PoolSize, Name
+) ->
+    case should_subscribe(RemoteTopic, IsFirstWorker, PoolSize, Name) of
+        true ->
+            x:show(subscribe_remote_topic_2, {RemoteTopic, QoS, Remote}),
+            emqtt:subscribe(Pid, RemoteTopic, QoS);
+        false ->
+            ok
+    end.
+
+should_subscribe(RemoteTopic, IsFirstWorker, PoolSize, Name) ->
+    case emqx_topic:parse(RemoteTopic) of
+        {#share{} = _Filter, _SubOpts} ->
+            % NOTE: this is shared subscription, many workers may subscribe
+            true;
+        {_Filter, #{}} when PoolSize > 1 ->
+            % NOTE: this is regular subscription, only one worker should subscribe
+            ?SLOG(warning, #{
+                msg => "mqtt_pool_size_ignored",
+                connector => Name,
+                reason =>
+                    "Remote topic filter is not a shared subscription, "
+                    "only a single connection will be used from the connection pool",
+                config_pool_size => PoolSize,
+                pool_size => 1
+            }),
+            IsFirstWorker;
+        {_Filter, #{}} when PoolSize == 1 ->
+            % NOTE: this is regular subscription, only one worker should subscribe
+            IsFirstWorker
+    end.
 
 %%
 
+config(#{ingress_list := IngressList} = Conf, Name) ->
+    NewIngressList = [fix_remote_config(Ingress, Name) || Ingress <- IngressList],
+    Conf#{ingress_list => NewIngressList}.
+
 -spec config(map(), name()) ->
     ingress().
-config(#{remote := RC, local := LC} = Conf, BridgeName) ->
+fix_remote_config(#{remote := RC, local := LC} = Conf, BridgeName) ->
     Conf#{
         remote => parse_remote(RC, BridgeName),
         local => emqx_bridge_mqtt_msg:parse(LC)
@@ -184,6 +240,7 @@ status(Pid) ->
 %%
 
 handle_publish(#{properties := Props} = MsgIn, Name, OnMessage, LocalPublish, IngressVars) ->
+    x:show(handle_publish_6, {MsgIn, Name, OnMessage, LocalPublish, IngressVars}),
     Msg = import_msg(MsgIn, IngressVars),
     ?SLOG(debug, #{
         msg => "ingress_publish_local",
@@ -197,6 +254,7 @@ handle_disconnect(_Reason) ->
     ok.
 
 maybe_on_message_received(Msg, {Mod, Func, Args}) ->
+    x:show(maybe_on_message_received_2, {Msg, Mod, Func, Args}),
     erlang:apply(Mod, Func, [Msg | Args]);
 maybe_on_message_received(_Msg, undefined) ->
     ok.

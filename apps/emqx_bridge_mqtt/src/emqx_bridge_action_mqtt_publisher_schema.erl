@@ -45,8 +45,7 @@ fields(action) ->
 fields("mqtt_publisher_action") ->
     emqx_bridge_v2_schema:make_producer_action_schema(
         hoconsc:mk(
-            fields(action_parameters),
-            % hoconsc:ref(?MODULE, action_parameters),
+            hoconsc:ref(?MODULE, action_parameters),
             #{
                 required => true,
                 desc => ?DESC("action_parameters")
@@ -54,36 +53,13 @@ fields("mqtt_publisher_action") ->
         )
     );
 fields(action_parameters) ->
-    hoconsc:union([
-        ref(?MODULE, egress_parameters),
-        ref(?MODULE, ingress_parameters)
-    ]);
-fields(egress_parameters) ->
     Fields0 = emqx_bridge_mqtt_connector_schema:fields("egress"),
     Fields1 = proplists:delete(pool_size, Fields0),
-    [
-        {direction,
-            mk(
-                hoconsc:enum([publisher]),
-                #{
-                    desc => <<"Enable or disable this connector">>,
-                    default => publisher
-                }
-            )}
-    ] ++ Fields1;
+    Fields1;
 fields(ingress_parameters) ->
     Fields0 = emqx_bridge_mqtt_connector_schema:fields("ingress"),
     Fields1 = proplists:delete(pool_size, Fields0),
-    [
-        {direction,
-            mk(
-                hoconsc:enum([subscriber]),
-                #{
-                    desc => <<"Enable or disable this connector">>,
-                    default => subscriber
-                }
-            )}
-    ] ++ Fields1;
+    Fields1;
 fields("resource_opts") ->
     UnsupportedOpts = [enable_batch, batch_size, batch_time],
     lists:filter(

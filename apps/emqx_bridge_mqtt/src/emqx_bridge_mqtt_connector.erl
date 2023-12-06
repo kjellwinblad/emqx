@@ -43,9 +43,16 @@
 %% ===================================================================
 %% When use this bridge as a data source, ?MODULE:on_message_received will be called
 %% if the bridge received msgs from the remote broker.
-on_message_received(Msg, HookPoint, ResId) ->
+on_message_received(Msg, HookPoints, ResId) ->
+    x:show(on_message_received, {Msg, HookPoints, ResId}),
     emqx_resource_metrics:received_inc(ResId),
-    emqx_hooks:run(HookPoint, [Msg]).
+    lists:foreach(
+        fun(HookPoint) ->
+            x:show(on_message_received_xxxxxxxxxxxxxxxxxxxxxxxxxxx, HookPoint),
+            emqx_hooks:run(HookPoint, [Msg])
+        end,
+        HookPoints
+    ).
 
 %% ===================================================================
 callback_mode() -> async_if_possible.
@@ -57,19 +64,19 @@ on_start(ResourceId, Conf) ->
         connector => ResourceId,
         config => emqx_utils:redact(Conf)
     }),
-    % case start_ingress(ResourceId, Conf) of
-    %     {ok, Result1} ->
-    case start_egress(ResourceId, Conf) of
-        {ok, Result2} ->
-            {ok, Result2#{installed_channels => #{}}};
+    case start_ingress(ResourceId, Conf) of
+        {ok, Result1} ->
+            x:show(start_ingress_ok, Result1),
+            case start_egress(ResourceId, Conf) of
+                {ok, Result2} ->
+                    {ok, Result2#{installed_channels => #{}}};
+                {error, Reason} ->
+                    _ = stop_ingress(Result1),
+                    {error, Reason}
+            end;
         {error, Reason} ->
-            % _ = stop_ingress(Result2),
             {error, Reason}
-    end
-% {error, Reason} ->
-%     {error, Reason}
-% end
-.
+    end.
 
 on_add_channel(
     _InstId,
@@ -133,55 +140,62 @@ on_get_channel_status(
 on_get_channels(ResId) ->
     emqx_bridge_v2:get_channels_for_connector(ResId).
 
-% start_ingress(ResourceId, Conf) ->
-%     ClientOpts = mk_client_opts(ResourceId, "ingress", Conf),
-%     case mk_ingress_config(ResourceId, Conf) of
-%         Ingress = #{} ->
-%             start_ingress(ResourceId, Ingress, ClientOpts);
-%         undefined ->
-%             {ok, #{}}
-%     end.
+start_ingress(ResourceId, Conf) ->
+    x:show(start_ingress, Conf),
+    ClientOpts = mk_client_opts(ResourceId, "ingress", Conf),
+    case mk_ingress_config(ResourceId, Conf) of
+        Ingress = #{} ->
+            start_ingress(ResourceId, Ingress, ClientOpts);
+        undefined ->
+            x:show(undefined_yeah),
+            {ok, #{}}
+    end.
 
-% start_ingress(ResourceId, Ingress, ClientOpts) ->
-%     PoolName = <<ResourceId/binary, ":ingress">>,
-%     PoolSize = choose_ingress_pool_size(ResourceId, Ingress),
-%     Options = [
-%         {name, PoolName},
-%         {pool_size, PoolSize},
-%         {ingress, Ingress},
-%         {client_opts, ClientOpts}
-%     ],
-%     ok = emqx_resource:allocate_resource(ResourceId, ingress_pool_name, PoolName),
-%     case emqx_resource_pool:start(PoolName, emqx_bridge_mqtt_ingress, Options) of
-%         ok ->
-%             {ok, #{ingress_pool_name => PoolName}};
-%         {error, {start_pool_failed, _, Reason}} ->
-%             {error, Reason}
-%     end.
+start_ingress(ResourceId, Ingress, ClientOpts) ->
+    PoolName = <<ResourceId/binary, ":ingress">>,
+    PoolSize = choose_ingress_pool_size(ResourceId, Ingress),
+    Options = [
+        {name, PoolName},
+        {pool_size, PoolSize},
+        {ingress, Ingress},
+        {client_opts, ClientOpts}
+    ],
+    ok = emqx_resource:allocate_resource(ResourceId, ingress_pool_name, PoolName),
+    case emqx_resource_pool:start(PoolName, emqx_bridge_mqtt_ingress, Options) of
+        ok ->
+            {ok, #{ingress_pool_name => PoolName}};
+        {error, {start_pool_failed, _, Reason}} ->
+            {error, Reason}
+    end.
 
-% choose_ingress_pool_size(
-%     ResourceId,
-%     #{remote := #{topic := RemoteTopic}, pool_size := PoolSize}
-% ) ->
-%     case emqx_topic:parse(RemoteTopic) of
-%         {#share{} = _Filter, _SubOpts} ->
-%             % NOTE: this is shared subscription, many workers may subscribe
-%             PoolSize;
-%         {_Filter, #{}} when PoolSize > 1 ->
-%             % NOTE: this is regular subscription, only one worker should subscribe
-%             ?SLOG(warning, #{
-%                 msg => "mqtt_bridge_ingress_pool_size_ignored",
-%                 connector => ResourceId,
-%                 reason =>
-%                     "Remote topic filter is not a shared subscription, "
-%                     "ingress pool will start with a single worker",
-%                 config_pool_size => PoolSize,
-%                 pool_size => 1
-%             }),
-%             1;
-%         {_Filter, #{}} when PoolSize == 1 ->
-%             1
-%     end.
+choose_ingress_pool_size(
+    _ResourceId,
+    %%remote := #{topic := RemoteTopic},
+    #{
+        pool_size := PoolSize
+    }
+) ->
+    %% TODO: check warn if any of the topics is not a shared subscription
+    PoolSize.
+% case emqx_topic:parse(RemoteTopic) of
+%     {#share{} = _Filter, _SubOpts} ->
+%         % NOTE: this is shared subscription, many workers may subscribe
+%         PoolSize;
+%     {_Filter, #{}} when PoolSize > 1 ->
+%         % NOTE: this is regular subscription, only one worker should subscribe
+%         ?SLOG(warning, #{
+%             msg => "mqtt_bridge_ingress_pool_size_ignored",
+%             connector => ResourceId,
+%             reason =>
+%                 "Remote topic filter is not a shared subscription, "
+%                 "ingress pool will start with a single worker",
+%             config_pool_size => PoolSize,
+%             pool_size => 1
+%         }),
+%         1;
+%     {_Filter, #{}} when PoolSize == 1 ->
+%         1
+% end.
 
 start_egress(ResourceId, Conf) ->
     % NOTE
@@ -378,74 +392,79 @@ combine_status(Statuses) ->
             disconnected
     end.
 
-% mk_ingress_config(
-%     ResourceId,
-%     #{
-%         ingress := Ingress = #{remote := _},
-%         server := Server,
-%         hookpoint := HookPoint
-%     }
-% ) ->
-%     Ingress#{
-%         server => Server,
-%         on_message_received => {?MODULE, on_message_received, [HookPoint, ResourceId]}
-%     };
-% mk_ingress_config(ResourceId, #{ingress := #{remote := _}} = Conf) ->
-%     error({no_hookpoint_provided, ResourceId, Conf});
-% mk_ingress_config(_ResourceId, #{}) ->
-%     undefined.
+mk_ingress_config(
+    ResourceId,
+    #{
+        ingress := Ingress,
+        server := Server,
+        hookpoints := HookPoints
+    } = Conf
+) ->
+    x:show(bra_linus),
+    PoolSize = maps:get(pool_size, Conf, emqx_connector_schema_lib:pool_size(default)),
+    #{
+        server => Server,
+        on_message_received => {?MODULE, on_message_received, [HookPoints, ResourceId]},
+        pool_size => PoolSize,
+        ingress_list => Ingress
+    };
+mk_ingress_config(ResourceId, #{ingress := #{remote := _}} = Conf) ->
+    error({no_hookpoint_provided, ResourceId, Conf});
+mk_ingress_config(_ResourceId, #{} = Config) ->
+    x:show(inte_bra_linus, Config),
+    undefined.
 
 % mk_egress_config(#{egress := Egress = #{remote := _}}) ->
 %     Egress;
 % mk_egress_config(#{}) ->
 %     undefined.
 
-% mk_client_opts(
-%     ResourceId,
-%     ClientScope,
-%     Config = #{
-%         server := Server,
-%         keepalive := KeepAlive,
-%         ssl := #{enable := EnableSsl} = Ssl
-%     }
-% ) ->
-%     HostPort = emqx_bridge_mqtt_connector_schema:parse_server(Server),
-%     Options = maps:with(
-%         [
-%             proto_ver,
-%             username,
-%             password,
-%             clean_start,
-%             retry_interval,
-%             max_inflight,
-%             % Opening a connection in bridge mode will form a non-standard mqtt connection message.
-%             % A load balancing server (such as haproxy) is often set up before the emqx broker server.
-%             % When the load balancing server enables mqtt connection packet inspection,
-%             % non-standard mqtt connection packets might be filtered out by LB.
-%             bridge_mode
-%         ],
-%         Config
-%     ),
-%     mk_client_opt_password(Options#{
-%         hosts => [HostPort],
-%         clientid => clientid(ResourceId, ClientScope, Config),
-%         connect_timeout => 30,
-%         keepalive => ms_to_s(KeepAlive),
-%         force_ping => true,
-%         ssl => EnableSsl,
-%         ssl_opts => maps:to_list(maps:remove(enable, Ssl))
-%     }).
+mk_client_opts(
+    ResourceId,
+    ClientScope,
+    Config = #{
+        server := Server,
+        keepalive := KeepAlive,
+        ssl := #{enable := EnableSsl} = Ssl
+    }
+) ->
+    HostPort = emqx_bridge_mqtt_connector_schema:parse_server(Server),
+    Options = maps:with(
+        [
+            proto_ver,
+            username,
+            password,
+            clean_start,
+            retry_interval,
+            max_inflight,
+            % Opening a connection in bridge mode will form a non-standard mqtt connection message.
+            % A load balancing server (such as haproxy) is often set up before the emqx broker server.
+            % When the load balancing server enables mqtt connection packet inspection,
+            % non-standard mqtt connection packets might be filtered out by LB.
+            bridge_mode
+        ],
+        Config
+    ),
+    mk_client_opt_password(Options#{
+        hosts => [HostPort],
+        clientid => clientid(ResourceId, ClientScope, Config),
+        connect_timeout => 30,
+        keepalive => ms_to_s(KeepAlive),
+        force_ping => true,
+        ssl => EnableSsl,
+        ssl_opts => maps:to_list(maps:remove(enable, Ssl))
+    }).
 
-% mk_client_opt_password(Options = #{password := Secret}) ->
-%     %% TODO: Teach `emqtt` to accept 0-arity closures as passwords.
-%     Options#{password := emqx_secret:unwrap(Secret)};
-% mk_client_opt_password(Options) ->
-%     Options.
+mk_client_opt_password(Options = #{password := Secret}) ->
+    %% TODO: Teach `emqtt` to accept 0-arity closures as passwords.
+    Options#{password := emqx_secret:unwrap(Secret)};
+mk_client_opt_password(Options) ->
+    Options.
 
-% ms_to_s(Ms) ->
-%     erlang:ceil(Ms / 1000).
+ms_to_s(Ms) ->
+    erlang:ceil(Ms / 1000).
 
-% clientid(Id, ClientScope, _Conf = #{clientid_prefix := Prefix}) when is_binary(Prefix) ->
-%     iolist_to_binary([Prefix, ":", Id, ":", ClientScope, ":", atom_to_list(node())]);
-% clientid(Id, ClientScope, _Conf) ->
-%     iolist_to_binary([Id, ":", ClientScope, ":", atom_to_list(node())]).
+clientid(Id, ClientScope, _Conf = #{clientid_prefix := Prefix}) when is_binary(Prefix) ->
+    iolist_to_binary([Prefix, ":", Id, ":", ClientScope, ":", atom_to_list(node())]);
+clientid(Id, ClientScope, _Conf) ->
+    iolist_to_binary([Id, ":", ClientScope, ":", atom_to_list(node())]).

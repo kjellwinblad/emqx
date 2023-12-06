@@ -25,25 +25,10 @@ connector_type_name() -> mqtt.
 schema_module() -> emqx_bridge_action_mqtt_publisher_schema.
 
 bridge_v1_config_to_connector_config(Config) ->
-    bridge_v1_config_to_connector_config_helper(check_and_simplify_bridge_v1_config(Config)).
-
-bridge_v1_config_to_connector_config_helper(
-    #{
-        <<"egress">> := _EgressMap
-    } = Config
-) ->
     %% Transform the egress part to mqtt_publisher connector config
     x:show(before_transform_egress, Config),
     ConnectorConfigMap = make_connector_config_from_bridge_v1_config(Config),
     x:show(after_transform_egress, ConnectorConfigMap),
-    {ConnectorConfigMap, mqtt};
-bridge_v1_config_to_connector_config_helper(
-    #{
-        <<"ingress">> := _IngressMap
-    } = Config
-) ->
-    x:show(before_transform_ingress, Config),
-    ConnectorConfigMap = make_connector_config_from_bridge_v1_config(Config),
     {ConnectorConfigMap, mqtt}.
 
 make_connector_config_from_bridge_v1_config(Config) ->
@@ -61,13 +46,27 @@ make_connector_config_from_bridge_v1_config(Config) ->
     ResourceOptsMap = maps:get(<<"resource_opts">>, ConnectorConfigMap, #{}),
     ResourceOptsMap2 = maps:with(ResourceOptsTopFields, ResourceOptsMap),
     ConnectorConfigMap2 = maps:put(<<"resource_opts">>, ResourceOptsMap2, ConnectorConfigMap),
-    ConnectorConfigMap2.
+    %% Ingress part should be changed to a list
+    IngressMap0 = maps:get(<<"ingress">>, Config, #{}),
+    %% Move pool_size from ingress to the top level
+    PoolSize = maps:get(<<"pool_size">>, IngressMap0, emqx_connector_schema_lib:pool_size(default)),
+    IngressMap1 = maps:remove(<<"pool_size">>, IngressMap0),
+    ConnectorConfigMap3 = maps:put(<<"pool_size">>, PoolSize, ConnectorConfigMap2),
+    ConnectorConfigMap4 = maps:put(<<"ingress">>, [IngressMap1], ConnectorConfigMap3),
+    ConnectorConfigMap4.
 
 bridge_v1_config_to_action_config(BridgeV1Config, ConnectorName) ->
     bridge_v1_config_to_action_config_helper(
-        check_and_simplify_bridge_v1_config(BridgeV1Config), ConnectorName
+        BridgeV1Config, ConnectorName
     ).
 
+bridge_v1_config_to_action_config_helper(
+    #{
+        <<"egress">> := EgressMap
+    } = _Config,
+    _ConnectorName
+) when map_size(EgressMap) =:= 0 ->
+    none;
 bridge_v1_config_to_action_config_helper(
     #{
         <<"egress">> := EgressMap
@@ -87,23 +86,10 @@ bridge_v1_config_to_action_config_helper(
     ),
     {ConfigMap3, mqtt};
 bridge_v1_config_to_action_config_helper(
-    #{
-        <<"ingress">> := IngressMap
-    } = Config,
-    ConnectorName
+    _Config,
+    _ConnectorName
 ) ->
-    %% Transform the egress part to mqtt_publisher connector config
-    SchemaFields = emqx_bridge_action_mqtt_publisher_schema:fields("mqtt_publisher_action"),
-    ResourceOptsSchemaFields = emqx_bridge_action_mqtt_publisher_schema:fields("resource_opts"),
-    ConfigMap1 = general_action_conf_map_from_bridge_v1_config(
-        Config, ConnectorName, SchemaFields, ResourceOptsSchemaFields
-    ),
-    %% Add parameters field to the action config
-    ConfigMap2 = maps:put(<<"parameters">>, IngressMap, ConfigMap1),
-    ConfigMap3 = emqx_utils_maps:deep_put(
-        [<<"parameters">>, <<"direction">>], ConfigMap2, <<"subscriber">>
-    ),
-    {ConfigMap3, mqtt}.
+    none.
 
 general_action_conf_map_from_bridge_v1_config(
     Config, ConnectorName, SchemaFields, ResourceOptsSchemaFields
@@ -130,29 +116,29 @@ general_action_conf_map_from_bridge_v1_config(
     ActionConfig2 = maps:put(<<"connector">>, ConnectorName, ActionConfig1),
     ActionConfig2.
 
-check_and_simplify_bridge_v1_config(
-    #{
-        <<"egress">> := EgressMap
-    } = Config
-) when map_size(EgressMap) =:= 0 ->
-    check_and_simplify_bridge_v1_config(maps:remove(<<"egress">>, Config));
-check_and_simplify_bridge_v1_config(
-    #{
-        <<"ingress">> := IngressMap
-    } = Config
-) when map_size(IngressMap) =:= 0 ->
-    check_and_simplify_bridge_v1_config(maps:remove(<<"ingress">>, Config));
-check_and_simplify_bridge_v1_config(#{
-    <<"egress">> := _EGressMap,
-    <<"ingress">> := _InGressMap
-}) ->
-    %% We should crash beacuse we don't support upgrading when ingress and egress exist at the same time
-    error(
-        {unsupported_config,
-            <<"Upgrade not supported when ingress and egress exist in the same MQTT bridge. Please divide the egress and ingress part to separate bridges in the configuration.">>}
-    );
-check_and_simplify_bridge_v1_config(SimplifiedConfig) ->
-    SimplifiedConfig.
+% check_and_simplify_bridge_v1_config(
+%     #{
+%         <<"egress">> := EgressMap
+%     } = Config
+% ) when map_size(EgressMap) =:= 0 ->
+%     check_and_simplify_bridge_v1_config(maps:remove(<<"egress">>, Config));
+% check_and_simplify_bridge_v1_config(
+%     #{
+%         <<"ingress">> := IngressMap
+%     } = Config
+% ) when map_size(IngressMap) =:= 0 ->
+%     check_and_simplify_bridge_v1_config(maps:remove(<<"ingress">>, Config));
+% check_and_simplify_bridge_v1_config(#{
+%     <<"egress">> := _EGressMap,
+%     <<"ingress">> := _InGressMap
+% }) ->
+%     %% We should crash beacuse we don't support upgrading when ingress and egress exist at the same time
+%     error(
+%         {unsupported_config,
+%             <<"Upgrade not supported when ingress and egress exist in the same MQTT bridge. Please divide the egress and ingress part to separate bridges in the configuration.">>}
+%     );
+% check_and_simplify_bridge_v1_config(SimplifiedConfig) ->
+%     SimplifiedConfig.
 
 connector_action_config_to_bridge_v1_config(
     ConnectorConfig, ActionConfig

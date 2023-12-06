@@ -279,6 +279,12 @@ remove(Type, Name, _Conf, _Opts) ->
 
 %% convert connector configs to what the connector modules want
 parse_confs(
+    <<"mqtt">> = Type,
+    Name,
+    Conf
+) ->
+    insert_hookpoints(Type, Name, Conf);
+parse_confs(
     <<"http">>,
     _Name,
     #{
@@ -348,6 +354,13 @@ parse_confs(<<"iotdb">>, Name, Conf) ->
     );
 parse_confs(ConnectorType, _Name, Config) ->
     connector_config(ConnectorType, Config).
+
+insert_hookpoints(Type, Name, Conf) ->
+    BId = emqx_bridge_resource:bridge_id(Type, Name),
+    BridgeHookpoint = emqx_bridge_resource:bridge_hookpoint(BId),
+    ConnectorHookpoint = connector_hookpoint(BId),
+    HookPoints = [BridgeHookpoint, ConnectorHookpoint],
+    x:show(aug_conf, Conf#{hookpoints => HookPoints}).
 
 connector_config(ConnectorType, Config) ->
     Mod = connector_impl_module(ConnectorType),

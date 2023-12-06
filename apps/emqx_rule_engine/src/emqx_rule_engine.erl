@@ -618,6 +618,7 @@ set_extra_functions_module(Mod) ->
 %% ones, the rule shouldn't be allowed to be enabled.
 %% The actions here are already parsed.
 validate_bridge_existence_in_actions(#{actions := Actions, from := Froms} = _Rule) ->
+    x:show(here_zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz),
     BridgeIDs0 =
         lists:map(
             fun(BridgeID) ->
@@ -628,23 +629,29 @@ validate_bridge_existence_in_actions(#{actions := Actions, from := Froms} = _Rul
     BridgeIDs1 =
         lists:filtermap(
             fun
-                ({bridge_v2, Type, Name}) -> {true, {Type, Name}};
-                ({bridge, Type, Name, _ResId}) -> {true, {Type, Name}};
+                ({bridge_v2, Type, Name}) -> x:show(aaaaaaaaaaaaa, {true, {Type, Name}});
+                ({bridge, Type, Name, _ResId}) -> x:show(bbbbbbbbbbb, {true, {Type, Name}});
                 (_) -> false
             end,
             Actions
         ),
+    x:show(what0, BridgeIDs0),
+    x:show(what1, BridgeIDs1),
     NonExistentBridgeIDs =
         lists:filter(
-            fun({Type, Name}) ->
-                try
-                    case emqx_bridge:lookup(Type, Name) of
-                        {ok, _} -> false;
-                        {error, _} -> true
+            fun
+                ({mqtt, _Name}) ->
+                    %% TODO Ignore mqtt until we have a working compatibility layer for mqtt
+                    false;
+                ({Type, Name}) ->
+                    try
+                        case emqx_bridge:lookup(Type, Name) of
+                            {ok, _} -> false;
+                            {error, _} -> true
+                        end
+                    catch
+                        _:_ -> true
                     end
-                catch
-                    _:_ -> true
-                end
             end,
             BridgeIDs0 ++ BridgeIDs1
         ),

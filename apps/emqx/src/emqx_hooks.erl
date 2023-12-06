@@ -159,8 +159,9 @@ del(HookPoint, Action) ->
 %% @doc Run hooks.
 -spec run(hookpoint(), list(Arg :: term())) -> ok.
 run(HookPoint, Args) ->
-    ok = emqx_hookpoints:verify_hookpoint(HookPoint),
-    do_run(lookup(HookPoint), Args).
+    ok = x:show(verify, emqx_hookpoints:verify_hookpoint(HookPoint)),
+    x:show(hookpoint_what, HookPoint),
+    do_run(x:show(lookup_hook, lookup(HookPoint)), Args).
 
 %% @doc Run hooks with Accumulator.
 -spec run_fold(hookpoint(), list(Arg :: term()), Acc :: term()) -> Acc :: term().
@@ -222,10 +223,14 @@ execute({M, F, A}, Args) ->
 %% @doc Lookup callbacks.
 -spec lookup(hookpoint()) -> [callback()].
 lookup(HookPoint) ->
+    x:show(full_ets_table, ets:tab2list(?TAB)),
+    x:show(hookpoint_yes, HookPoint),
     case ets:lookup(?TAB, HookPoint) of
         [#hook{callbacks = Callbacks}] ->
+            x:show(success),
             Callbacks;
         [] ->
+            x:show(fail),
             []
     end.
 

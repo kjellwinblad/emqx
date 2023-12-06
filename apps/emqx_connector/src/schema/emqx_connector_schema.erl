@@ -302,9 +302,9 @@ generate_connector_name(ConnectorsMap, BridgeName, Attempt) ->
     ConnectorNameList =
         case Attempt of
             0 ->
-                io_lib:format("connector_~s", [BridgeName]);
+                io_lib:format("~s", [BridgeName]);
             _ ->
-                io_lib:format("connector_~s_~p", [BridgeName, Attempt + 1])
+                io_lib:format("~s_~p", [BridgeName, Attempt + 1])
         end,
     ConnectorName = iolist_to_binary(ConnectorNameList),
     case maps:is_key(ConnectorName, ConnectorsMap) of
@@ -364,11 +364,17 @@ transform_old_style_bridges_to_connector_and_actions_of_type(
                 RawConfigSoFar1
             ),
             %% Add action
-            RawConfigSoFar3 = emqx_utils_maps:deep_put(
-                [actions_config_name(), to_bin(NewActionType), BridgeName],
-                RawConfigSoFar2,
-                ActionMap
-            ),
+            RawConfigSoFar3 =
+                case ActionMap of
+                    none ->
+                        RawConfigSoFar2;
+                    _ ->
+                        emqx_utils_maps:deep_put(
+                            [actions_config_name(), to_bin(NewActionType), BridgeName],
+                            RawConfigSoFar2,
+                            ActionMap
+                        )
+                end,
             RawConfigSoFar3
         end,
         RawConfig,
