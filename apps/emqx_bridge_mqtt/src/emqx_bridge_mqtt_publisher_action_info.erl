@@ -52,7 +52,13 @@ make_connector_config_from_bridge_v1_config(Config) ->
     PoolSize = maps:get(<<"pool_size">>, IngressMap0, emqx_connector_schema_lib:pool_size(default)),
     IngressMap1 = maps:remove(<<"pool_size">>, IngressMap0),
     ConnectorConfigMap3 = maps:put(<<"pool_size">>, PoolSize, ConnectorConfigMap2),
-    ConnectorConfigMap4 = maps:put(<<"ingress">>, [IngressMap1], ConnectorConfigMap3),
+    ConnectorConfigMap4 =
+        case IngressMap1 =:= #{} of
+            true ->
+                ConnectorConfigMap3;
+            false ->
+                maps:put(<<"ingress">>, [IngressMap1], ConnectorConfigMap3)
+        end,
     ConnectorConfigMap4.
 
 bridge_v1_config_to_action_config(BridgeV1Config, ConnectorName) ->
@@ -81,10 +87,7 @@ bridge_v1_config_to_action_config_helper(
     ),
     %% Add parameters field (Egress map) to the action config
     ConfigMap2 = maps:put(<<"parameters">>, EgressMap, ConfigMap1),
-    ConfigMap3 = emqx_utils_maps:deep_put(
-        [<<"parameters">>, <<"direction">>], ConfigMap2, <<"publisher">>
-    ),
-    {ConfigMap3, mqtt};
+    {ConfigMap2, mqtt};
 bridge_v1_config_to_action_config_helper(
     _Config,
     _ConnectorName
