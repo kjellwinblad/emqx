@@ -402,7 +402,6 @@ augment_channel_config(
     BridgeName,
     Config
 ) ->
-    x:show(is_ingress, emqx_action_info:is_ingress(BridgeV2Type)),
     AugmentedConf = Config#{
         bridge_type => bin(BridgeV2Type),
         bridge_name => bin(BridgeName)
@@ -411,7 +410,7 @@ augment_channel_config(
         true ->
             BId = emqx_bridge_resource:bridge_id(BridgeV2Type, BridgeName),
             BridgeHookpoint = emqx_bridge_resource:bridge_hookpoint(BId),
-            x:show(aug_conf, AugmentedConf#{hookpoint => BridgeHookpoint});
+            AugmentedConf#{hookpoint => BridgeHookpoint};
         false ->
             AugmentedConf
     end.

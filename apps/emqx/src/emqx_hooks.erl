@@ -223,14 +223,10 @@ execute({M, F, A}, Args) ->
 %% @doc Lookup callbacks.
 -spec lookup(hookpoint()) -> [callback()].
 lookup(HookPoint) ->
-    x:show(full_ets_table, ets:tab2list(?TAB)),
-    x:show(hookpoint_yes, HookPoint),
     case ets:lookup(?TAB, HookPoint) of
         [#hook{callbacks = Callbacks}] ->
-            x:show(success),
             Callbacks;
         [] ->
-            x:show(fail),
             []
     end.
 
