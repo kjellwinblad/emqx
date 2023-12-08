@@ -137,7 +137,8 @@ connector_type_to_bridge_types(timescale) ->
 connector_type_to_bridge_types(redis) ->
     [redis, redis_single, redis_sentinel, redis_cluster].
 
-actions_config_name() -> <<"actions">>.
+actions_config_name(action) -> <<"actions">>;
+actions_config_name(source) -> <<"sources">>.
 
 has_connector_field(BridgeConf, ConnectorFields) ->
     lists:any(
@@ -176,11 +177,6 @@ split_bridge_to_connector_and_action(
         {BridgeType, BridgeName, BridgeV1Conf, ConnectorFields, PreviousRawConfig}
     }
 ) ->
-    x:show(
-        has_custom,
-        {BridgeType, BridgeName,
-            emqx_action_info:has_custom_bridge_v1_config_to_connector_config(BridgeType)}
-    ),
     {ConnectorMap, ConnectorType} =
         case emqx_action_info:has_custom_bridge_v1_config_to_connector_config(BridgeType) of
             true ->
@@ -189,7 +185,7 @@ split_bridge_to_connector_and_action(
                         BridgeType, BridgeV1Conf
                     )
                 of
-                    {ConMap, ConType} ->
+                    {ConType, ConMap} ->
                         {ConMap, ConType};
                     ConMap ->
                         {ConMap, OrgConnectorType}
@@ -225,7 +221,7 @@ split_bridge_to_connector_and_action(
             _ -> generate_connector_name(ConnectorsMap, BridgeName, 0)
         end,
     OrgActionType = emqx_action_info:bridge_v1_type_to_action_type(BridgeType),
-    {ActionMap, ActionType} =
+    {ActionMap, ActionType, ActionOrSource} =
         case emqx_action_info:has_custom_bridge_v1_config_to_action_config(BridgeType) of
             true ->
                 case
@@ -233,10 +229,10 @@ split_bridge_to_connector_and_action(
                         BridgeType, BridgeV1Conf, ConnectorName
                     )
                 of
-                    {ActionMap0, ActionType0} ->
-                        {ActionMap0, ActionType0};
+                    {ActionOrSource0, ActionType0, ActionMap0} ->
+                        {ActionMap0, ActionType0, ActionOrSource0};
                     ActionMap0 ->
-                        {ActionMap0, OrgActionType}
+                        {ActionMap0, OrgActionType, action}
                 end;
             false ->
                 ActionMap0 =
@@ -245,7 +241,8 @@ split_bridge_to_connector_and_action(
                     ),
                 {ActionMap0, OrgActionType}
         end,
-    {BridgeType, BridgeName, ActionMap, ActionType, ConnectorName, ConnectorMap, ConnectorType}.
+    {BridgeType, BridgeName, ActionMap, ActionType, ActionOrSource, ConnectorName, ConnectorMap,
+        ConnectorType}.
 
 transform_bridge_v1_config_to_action_config(
     BridgeV1Conf, ConnectorName, ConnectorConfSchemaMod, ConnectorConfSchemaName
@@ -348,8 +345,8 @@ transform_old_style_bridges_to_connector_and_actions_of_type(
     %% Add connectors and actions and remove bridges
     lists:foldl(
         fun(
-            {BridgeType, BridgeName, ActionMap, NewActionType, ConnectorName, ConnectorMap,
-                NewConnectorType},
+            {BridgeType, BridgeName, ActionMap, NewActionType, ActionOrSource, ConnectorName,
+                ConnectorMap, NewConnectorType},
             RawConfigSoFar
         ) ->
             %% Add connector
@@ -370,7 +367,11 @@ transform_old_style_bridges_to_connector_and_actions_of_type(
                         RawConfigSoFar2;
                     _ ->
                         emqx_utils_maps:deep_put(
-                            [actions_config_name(), to_bin(NewActionType), BridgeName],
+                            [
+                                actions_config_name(ActionOrSource),
+                                to_bin(NewActionType),
+                                BridgeName
+                            ],
                             RawConfigSoFar2,
                             ActionMap
                         )
@@ -382,14 +383,13 @@ transform_old_style_bridges_to_connector_and_actions_of_type(
     ).
 
 transform_bridges_v1_to_connectors_and_bridges_v2(RawConfig) ->
-    x:show(raw_before_transform, RawConfig),
     ConnectorFields = ?MODULE:fields(connectors),
     NewRawConf = lists:foldl(
         fun transform_old_style_bridges_to_connector_and_actions_of_type/2,
         RawConfig,
         ConnectorFields
     ),
-    x:show(raw_after_transform, NewRawConf),
+    x:show(final_out_conf, NewRawConf),
     NewRawConf.
 
 %%======================================================================================

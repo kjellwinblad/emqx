@@ -59,10 +59,8 @@ on_start(ResourceId, Conf) ->
     }),
     case start_egress(ResourceId, Conf) of
         {ok, Result2} ->
-            x:show(start_egress_ok, Result2),
             {ok, Result2#{installed_channels => #{}}};
         {error, Reason} ->
-            x:show(start_egress_ok_not, Reason),
             {error, Reason}
     end.
 
@@ -100,7 +98,6 @@ on_add_channel(
     ChannelId,
     ChannelConfig
 ) ->
-    x:show(on_add_channel, ChannelConfig),
     ChannelState = maps:get(parameters, ChannelConfig),
     NewInstalledChannels = maps:put(ChannelId, ChannelState, InstalledChannels),
     %% Update state
@@ -126,7 +123,6 @@ on_get_channel_status(
         installed_channels := Channels
     } = _State
 ) when is_map_key(ChannelId, Channels) ->
-    x:show(prudcer_status_connected, ChannelId),
     connected.
 
 on_get_channels(ResId) ->
@@ -244,7 +240,6 @@ classify_error(Reason) ->
     {unrecoverable_error, Reason}.
 
 on_get_status(_ResourceId, State) ->
-    x:show(on_get_status_connector, State),
     Pools = maps:to_list(maps:with([egress_pool_name], State)),
     Workers = [{Pool, Worker} || {Pool, PN} <- Pools, {_Name, Worker} <- ecpool:workers(PN)],
     try emqx_utils:pmap(fun get_status/1, Workers, ?HEALTH_CHECK_TIMEOUT) of

@@ -25,8 +25,10 @@
     action_type_to_bridge_v1_type/2,
     bridge_v1_type_to_action_type/1,
     is_action_type/1,
-    is_ingress/1,
-    registered_schema_modules/0,
+    is_source/1,
+    is_action/1,
+    registered_schema_modules_actions/0,
+    registered_schema_modules_sources/0,
     connector_action_config_to_bridge_v1_config/3,
     has_custom_connector_action_config_to_bridge_v1_config/1,
     bridge_v1_config_to_connector_config/2,
@@ -51,14 +53,16 @@
 ) -> map().
 %% Define this if the automatic config upgrade is not enough for the connector.
 -callback bridge_v1_config_to_connector_config(BridgeV1Config :: map()) ->
-    map() | {map(), ConnectorTypeName :: atom()}.
+    map() | {ConnectorTypeName :: atom(), map()}.
 %% Define this if the automatic config upgrade is not enough for the bridge.
 %% If you want to make use of the automatic config upgrade, you can call
 %% emqx_action_info:transform_bridge_v1_config_to_action_config/4 in your
 %% implementation and do some adjustments on the result.
 -callback bridge_v1_config_to_action_config(BridgeV1Config :: map(), ConnectorName :: binary()) ->
-    map() | {map(), ActionTypeName :: atom()} | 'none'.
--callback is_ingress() ->
+    map() | {source | action, ActionTypeName :: atom(), map()} | 'none'.
+-callback is_source() ->
+    boolean().
+-callback is_action() ->
     boolean().
 
 -optional_callbacks([
@@ -66,7 +70,8 @@
     connector_action_config_to_bridge_v1_config/2,
     bridge_v1_config_to_connector_config/1,
     bridge_v1_config_to_action_config/2,
-    is_ingress/0
+    is_source/0,
+    is_action/0
 ]).
 
 %% ====================================================================
@@ -165,20 +170,32 @@ is_action_type(Type) ->
     end.
 
 %% Returns true if the action is an ingress action, false otherwise.
-is_ingress(Bin) when is_binary(Bin) ->
-    is_ingress(binary_to_existing_atom(Bin));
-is_ingress(Type) ->
+is_source(Bin) when is_binary(Bin) ->
+    is_source(binary_to_existing_atom(Bin));
+is_source(Type) ->
     ActionInfoMap = info_map(),
-    ActionTypes = maps:get(action_type_names, ActionInfoMap),
-    case maps:get(Type, ActionTypes, undefined) of
-        undefined -> false;
-        _ -> true
-    end.
+    IsSourceMap = maps:get(is_source, ActionInfoMap),
+    maps:get(Type, IsSourceMap, false).
 
-registered_schema_modules() ->
+%% Returns true if the action is an egress action, false otherwise.
+is_action(Bin) when is_binary(Bin) ->
+    is_action(binary_to_existing_atom(Bin));
+is_action(Type) ->
+    ActionInfoMap = info_map(),
+    IsActionMap = maps:get(is_action, ActionInfoMap),
+    maps:get(Type, IsActionMap, true).
+
+registered_schema_modules_actions() ->
     InfoMap = info_map(),
     Schemas = maps:get(action_type_to_schema_module, InfoMap),
-    maps:to_list(Schemas).
+    All = maps:to_list(Schemas),
+    [{Type, SchemaMod} || {Type, SchemaMod} <- All, is_action(Type)].
+
+registered_schema_modules_sources() ->
+    InfoMap = info_map(),
+    Schemas = maps:get(action_type_to_schema_module, InfoMap),
+    All = maps:to_list(Schemas),
+    [{Type, SchemaMod} || {Type, SchemaMod} <- All, is_source(Type)].
 
 has_custom_connector_action_config_to_bridge_v1_config(ActionOrBridgeType) ->
     Module = get_action_info_module(ActionOrBridgeType),
@@ -191,7 +208,6 @@ connector_action_config_to_bridge_v1_config(ActionOrBridgeType, ConnectorConfig,
 
 has_custom_bridge_v1_config_to_connector_config(ActionOrBridgeType) ->
     Module = get_action_info_module(ActionOrBridgeType),
-    x:show(the_module, Module),
     erlang:function_exported(Module, bridge_v1_config_to_connector_config, 1).
 
 bridge_v1_config_to_connector_config(ActionOrBridgeType, BridgeV1Config) ->
@@ -273,7 +289,8 @@ initial_info_map() ->
         action_type_to_connector_type => #{},
         action_type_to_schema_module => #{},
         action_type_to_info_module => #{},
-        is_ingress => #{}
+        is_source => #{},
+        is_action => #{}
     }.
 
 get_info_map(Module) ->
@@ -293,11 +310,18 @@ get_info_map(Module) ->
                 {ActionType, [ActionType]}
         end,
     IsIngress =
-        case erlang:function_exported(Module, is_ingress, 0) of
+        case erlang:function_exported(Module, is_source, 0) of
             true ->
-                Module:is_ingress();
+                Module:is_source();
             false ->
                 false
+        end,
+    IsEgress =
+        case erlang:function_exported(Module, is_action, 0) of
+            true ->
+                Module:is_action();
+            false ->
+                true
         end,
     #{
         action_type_names =>
@@ -339,7 +363,10 @@ get_info_map(Module) ->
                 #{ActionType => Module},
                 BridgeV1Types
             ),
-        is_ingress => #{
+        is_source => #{
             ActionType => IsIngress
+        },
+        is_action => #{
+            ActionType => IsEgress
         }
     }.

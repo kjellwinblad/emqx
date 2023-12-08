@@ -618,7 +618,6 @@ set_extra_functions_module(Mod) ->
 %% ones, the rule shouldn't be allowed to be enabled.
 %% The actions here are already parsed.
 validate_bridge_existence_in_actions(#{actions := Actions, from := Froms} = _Rule) ->
-    x:show(here_zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz),
     BridgeIDs0 =
         lists:map(
             fun(BridgeID) ->
@@ -635,8 +634,6 @@ validate_bridge_existence_in_actions(#{actions := Actions, from := Froms} = _Rul
             end,
             Actions
         ),
-    x:show(what0, BridgeIDs0),
-    x:show(what1, BridgeIDs1),
     NonExistentBridgeIDs =
         lists:filter(
             fun

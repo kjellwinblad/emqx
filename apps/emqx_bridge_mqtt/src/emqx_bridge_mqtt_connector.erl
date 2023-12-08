@@ -43,12 +43,13 @@
 %% ===================================================================
 %% When use this bridge as a data source, ?MODULE:on_message_received will be called
 %% if the bridge received msgs from the remote broker.
+
 on_message_received(Msg, HookPoints, ResId) ->
-    x:show(on_message_received, {Msg, HookPoints, ResId}),
+    x:show(xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx_on_message_received, {Msg, HookPoints, ResId}),
+    erlang:halt(),
     emqx_resource_metrics:received_inc(ResId),
     lists:foreach(
         fun(HookPoint) ->
-            x:show(on_message_received_xxxxxxxxxxxxxxxxxxxxxxxxxxx, HookPoint),
             emqx_hooks:run(HookPoint, [Msg])
         end,
         HookPoints
@@ -57,16 +58,17 @@ on_message_received(Msg, HookPoints, ResId) ->
 %% ===================================================================
 callback_mode() -> async_if_possible.
 
-on_start(ResourceId, Conf) ->
+on_start(ResourceId, #{server := Server} = Conf) ->
     x:show(xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx_start_should_not_happen, Conf),
     ?SLOG(info, #{
         msg => "starting_mqtt_connector",
         connector => ResourceId,
         config => emqx_utils:redact(Conf)
     }),
-    case start_ingress(ResourceId, Conf) of
+    TopicToHandlerIndex = emqx_topic_index:new(),
+    StartIngressConf = Conf#{topic_to_handler_index => TopicToHandlerIndex},
+    case start_ingress(ResourceId, StartIngressConf) of
         {ok, Result1} ->
-            x:show(start_ingress_ok, Result1),
             % case start_egress(ResourceId, Conf) of
             %     {ok, Result2} ->
             %         {ok, Result2#{installed_channels => #{}}};
@@ -76,7 +78,9 @@ on_start(ResourceId, Conf) ->
             % end;
             {ok, Result1#{
                 installed_channels => #{},
-                clean_start => maps:get(clean_start, Conf)
+                clean_start => maps:get(clean_start, Conf),
+                topic_to_handler_index => TopicToHandlerIndex,
+                server => Server
             }};
         {error, Reason} ->
             {error, Reason}
@@ -85,12 +89,15 @@ on_start(ResourceId, Conf) ->
 on_add_channel(
     _InstId,
     #{
+        config_root := actions,
         installed_channels := InstalledChannels,
         clean_start := CleanStart
     } = OldState,
     ChannelId,
     ChannelConfig
 ) ->
+    %% Publisher channel
+    x:show(on_add_channel, ChannelConfig),
     %% make a warning if clean_start is set to false
     case CleanStart of
         false ->
@@ -107,35 +114,36 @@ on_add_channel(
         true ->
             ok
     end,
-    x:show(on_add_channel, ChannelConfig),
     ChannelState0 = maps:get(parameters, ChannelConfig),
     ChannelState = emqx_bridge_mqtt_egress:config(ChannelState0),
     NewInstalledChannels = maps:put(ChannelId, ChannelState, InstalledChannels),
     %% Update state
     NewState = OldState#{installed_channels => NewInstalledChannels},
+    {ok, NewState};
+on_add_channel(
+    _ResourceId,
+    #{
+        installed_channels := InstalledChannels,
+        ingress_pool_name := PoolName,
+        topic_to_handler_index := TopicToHandlerIndex,
+        server := Server
+    } = OldState,
+    ChannelId,
+    #{hookpoints := HookPoints} = ChannelConfig
+) ->
+    x:show(on_add_channel_subscriber, ChannelConfig),
+
+    ChannelState0 = maps:get(parameters, ChannelConfig),
+    ChannelState1 = ChannelState0#{hookpoints => HookPoints, server => Server},
+    ChannelState2 = mk_ingress_config(ChannelId, ChannelState1, TopicToHandlerIndex),
+
+    x:show(channel_state_1, ChannelState2),
+    x:show(tab2list, ets:tab2list(TopicToHandlerIndex)),
+    NewInstalledChannels = maps:put(ChannelId, ChannelState2, InstalledChannels),
+    %% Update state
+    NewState = OldState#{installed_channels => NewInstalledChannels},
+    ok = emqx_bridge_mqtt_ingress:subscribe_channel(PoolName, ChannelState2),
     {ok, NewState}.
-% ;
-% on_add_channel(
-%     _InstId,
-%     #{
-%         installed_channels := InstalledChannels
-%     } = OldState,
-%     ChannelId,
-%     #{
-%         parameters := #{direction := subscriber},
-%         hookpoint := HookPoint
-%     } = ChannelConfig
-% ) ->
-%     x:show(on_add_channel_subscriber, ChannelConfig),
-%     ChannelState0 = maps:get(parameters, ChannelConfig),
-%     ChannelState = ChannelState0#{
-%         on_message_received =>
-%             {?MODULE, on_message_received, [HookPoint, ChannelId]}
-%     },
-%     NewInstalledChannels = maps:put(ChannelId, ChannelState, InstalledChannels),
-%     %% Update state
-%     NewState = OldState#{installed_channels => NewInstalledChannels},
-%     {ok, NewState}.
 
 on_remove_channel(
     _InstId,
@@ -156,22 +164,14 @@ on_get_channel_status(
         installed_channels := Channels
     } = _State
 ) when is_map_key(ChannelId, Channels) ->
-    x:show(prudcer_status_connected, ChannelId),
     connected.
 
 on_get_channels(ResId) ->
     emqx_bridge_v2:get_channels_for_connector(ResId).
 
 start_ingress(ResourceId, Conf) ->
-    x:show(start_ingress, Conf),
     ClientOpts = mk_client_opts(ResourceId, "ingress", Conf),
-    case mk_ingress_config(ResourceId, Conf) of
-        Ingress = #{} ->
-            start_ingress(ResourceId, Ingress, ClientOpts);
-        undefined ->
-            x:show(undefined_yeah),
-            {ok, #{}}
-    end.
+    start_ingress(ResourceId, Conf, ClientOpts).
 
 start_ingress(ResourceId, Ingress, ClientOpts) ->
     PoolName = <<ResourceId/binary, ":ingress">>,
@@ -277,7 +277,6 @@ on_query(
             channel_id => ChannelId
         }
     ),
-    x:show(we_are_here),
     Channels = maps:get(installed_channels, State),
     ChannelConfig = maps:get(ChannelId, Channels),
     handle_send_result(with_egress_client(PoolName, send, [Msg, ChannelConfig]));
@@ -385,8 +384,7 @@ on_get_status(_ResourceId, State) ->
     Workers = [{Pool, Worker} || {Pool, PN} <- Pools, {_Name, Worker} <- ecpool:workers(PN)],
     try emqx_utils:pmap(fun get_status/1, Workers, ?HEALTH_CHECK_TIMEOUT) of
         Statuses ->
-            x:show(on_get_status, {Statuses, State}),
-            x:show(combined, combine_status(Statuses))
+            combine_status(Statuses)
     catch
         exit:timeout ->
             connecting
@@ -415,26 +413,16 @@ combine_status(Statuses) ->
     end.
 
 mk_ingress_config(
-    ResourceId,
-    #{
-        server := Server,
-        hookpoints := HookPoints
-    } = Conf
+    ChannelId,
+    IngressChannelConfig,
+    TopicToHandlerIndex
 ) ->
-    x:show(bra_linus),
-    PoolSize = maps:get(pool_size, Conf, emqx_connector_schema_lib:pool_size(default)),
-    Ingress = maps:get(ingress, Conf, []),
-    #{
-        server => Server,
-        on_message_received => {?MODULE, on_message_received, [HookPoints, ResourceId]},
-        pool_size => PoolSize,
-        ingress_list => Ingress
-    };
-mk_ingress_config(ResourceId, #{ingress := #{remote := _}} = Conf) ->
-    error({no_hookpoint_provided, ResourceId, Conf});
-mk_ingress_config(_ResourceId, #{} = Config) ->
-    x:show(inte_bra_linus, Config),
-    undefined.
+    HookPoints = maps:get(hookpoints, IngressChannelConfig, []),
+    NewConf = IngressChannelConfig#{
+        on_message_received => {?MODULE, on_message_received, [HookPoints, ChannelId]},
+        ingress_list => [IngressChannelConfig]
+    },
+    emqx_bridge_mqtt_ingress:config(NewConf, ChannelId, TopicToHandlerIndex).
 
 % mk_egress_config(#{egress := Egress = #{remote := _}}) ->
 %     Egress;
@@ -463,7 +451,8 @@ mk_client_opts(
             % A load balancing server (such as haproxy) is often set up before the emqx broker server.
             % When the load balancing server enables mqtt connection packet inspection,
             % non-standard mqtt connection packets might be filtered out by LB.
-            bridge_mode
+            bridge_mode,
+            topic_to_handler_index
         ],
         Config
     ),

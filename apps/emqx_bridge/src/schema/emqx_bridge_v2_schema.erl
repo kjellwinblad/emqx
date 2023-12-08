@@ -68,7 +68,7 @@ api_schema(Method) ->
     hoconsc:union(bridge_api_union(APISchemas)).
 
 registered_api_schemas(Method) ->
-    RegisteredSchemas = emqx_action_info:registered_schema_modules(),
+    RegisteredSchemas = emqx_action_info:registered_schema_modules_actions(),
     [
         api_ref(SchemaModule, atom_to_binary(BridgeV2Type), Method ++ "_bridge_v2")
      || {BridgeV2Type, SchemaModule} <- RegisteredSchemas
@@ -112,29 +112,43 @@ tags() ->
 -dialyzer({nowarn_function, roots/0}).
 
 roots() ->
-    case fields(actions) of
-        [] ->
-            [
-                {actions,
-                    ?HOCON(hoconsc:map(name, typerefl:map()), #{importance => ?IMPORTANCE_LOW})}
-            ];
-        _ ->
-            [{actions, ?HOCON(?R_REF(actions), #{importance => ?IMPORTANCE_LOW})}]
-    end.
+    ActionsRoot =
+        case fields(actions) of
+            [] ->
+                [
+                    {actions,
+                        ?HOCON(hoconsc:map(name, typerefl:map()), #{importance => ?IMPORTANCE_LOW})}
+                ];
+            _ ->
+                [{actions, ?HOCON(?R_REF(actions), #{importance => ?IMPORTANCE_LOW})}]
+        end,
+    SourcesRoot =
+        [{sources, ?HOCON(?R_REF(sources), #{importance => ?IMPORTANCE_LOW})}],
+    ActionsRoot ++ SourcesRoot.
 
 fields(actions) ->
-    registered_schema_fields();
+    registered_schema_fields_actions();
+fields(sources) ->
+    registered_schema_fields_sources();
 fields(resource_opts) ->
     emqx_resource_schema:create_opts(_Overrides = []).
 
-registered_schema_fields() ->
+registered_schema_fields_actions() ->
     [
         Module:fields(action)
-     || {_BridgeV2Type, Module} <- emqx_action_info:registered_schema_modules()
+     || {_BridgeV2Type, Module} <- emqx_action_info:registered_schema_modules_actions()
+    ].
+
+registered_schema_fields_sources() ->
+    [
+        Module:fields(source)
+     || {_BridgeV2Type, Module} <- emqx_action_info:registered_schema_modules_sources()
     ].
 
 desc(actions) ->
     ?DESC("desc_bridges_v2");
+desc(sources) ->
+    ?DESC("desc_sources");
 desc(resource_opts) ->
     ?DESC(emqx_resource_schema, "resource_opts");
 desc(_) ->
@@ -183,7 +197,7 @@ examples(Method) ->
             ConnectorExamples = erlang:apply(Module, bridge_v2_examples, [Method]),
             lists:foldl(MergeFun, Examples, ConnectorExamples)
         end,
-    SchemaModules = [Mod || {_, Mod} <- emqx_action_info:registered_schema_modules()],
+    SchemaModules = [Mod || {_, Mod} <- emqx_action_info:registered_schema_modules_actions()],
     lists:foldl(Fun, #{}, SchemaModules).
 
 top_level_common_action_keys() ->

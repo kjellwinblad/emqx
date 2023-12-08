@@ -124,7 +124,6 @@ to_remote_msg(#message{flags = Flags} = Msg, Vars) ->
     {EventMsg, _} = emqx_rule_events:eventmsg_publish(Msg),
     to_remote_msg(EventMsg#{retain => maps:get(retain, Flags, false)}, Vars);
 to_remote_msg(Msg = #{}, Remote) ->
-    x:show(to_remote_msg, Msg),
     #{
         topic := Topic,
         payload := Payload,

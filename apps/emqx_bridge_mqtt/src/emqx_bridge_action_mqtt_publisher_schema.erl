@@ -56,6 +56,25 @@ fields(action_parameters) ->
     Fields0 = emqx_bridge_mqtt_connector_schema:fields("egress"),
     Fields1 = proplists:delete(pool_size, Fields0),
     Fields1;
+fields(source) ->
+    {mqtt,
+        mk(
+            hoconsc:map(name, ref(?MODULE, "mqtt_subscriber_source")),
+            #{
+                desc => <<"MQTT Subscriber Source Config">>,
+                required => false
+            }
+        )};
+fields("mqtt_subscriber_source") ->
+    emqx_bridge_v2_schema:make_consumer_action_schema(
+        hoconsc:mk(
+            hoconsc:ref(?MODULE, ingress_parameters),
+            #{
+                required => true,
+                desc => ?DESC("source_parameters")
+            }
+        )
+    );
 fields(ingress_parameters) ->
     Fields0 = emqx_bridge_mqtt_connector_schema:fields("ingress"),
     Fields1 = proplists:delete(pool_size, Fields0),

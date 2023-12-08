@@ -108,9 +108,6 @@ reload() ->
 load(Topic) ->
     HookPoint = event_name(Topic),
     HookFun = hook_fun_name(HookPoint),
-    x:show(hookpoint, HookPoint),
-    x:show(hookfun, HookFun),
-    %%erlang:halt(),
     emqx_hooks:put(
         HookPoint, {?MODULE, HookFun, [#{event_topic => Topic}]}, ?HP_RULE_ENGINE
     ).
@@ -148,7 +145,6 @@ on_message_publish(Message = #message{topic = Topic}, _Conf) ->
     {ok, Message}.
 
 on_bridge_message_received(Message, Conf = #{event_topic := BridgeTopic}) ->
-    x:show(on_bridge_message_received, {Message, BridgeTopic}),
     apply_event(BridgeTopic, fun() -> with_basic_columns(BridgeTopic, Message, #{}) end, Conf).
 
 on_client_connected(ClientInfo, ConnInfo, Conf) ->
@@ -610,14 +606,10 @@ with_basic_columns(EventName, Columns, Envs) when is_map(Columns) ->
 %%--------------------------------------------------------------------
 apply_event(EventName, GenEventMsg, _Conf) ->
     EventTopic = event_topic(EventName),
-    x:show(event_topic, EventTopic),
     case emqx_rule_engine:get_rules_for_topic(EventTopic) of
         [] ->
-            x:show(no_rules_for_topic),
-            erlang:halt(0),
             ok;
         Rules ->
-            x:show(actually, Rules),
             %% delay the generating of eventmsg after we have found some rules to apply
             {Columns, Envs} = GenEventMsg(),
             emqx_rule_runtime:apply_rules(Rules, Columns, Envs)

@@ -45,7 +45,6 @@ new() ->
 %% between regular and "materialized" indexes, for example.
 -spec insert(emqx_types:topic() | words(), _ID, _Record, ets:table()) -> true.
 insert(Filter, ID, Record, Tab) ->
-    x:show(my_insert, {Filter, ID, Record, Tab}),
     Key = make_key(Filter, ID),
     true = ets:insert(Tab, {Key, Record}).
 

@@ -360,7 +360,7 @@ insert_hookpoints(Type, Name, Conf) ->
     BridgeHookpoint = emqx_bridge_resource:bridge_hookpoint(BId),
     ConnectorHookpoint = connector_hookpoint(BId),
     HookPoints = [BridgeHookpoint, ConnectorHookpoint],
-    x:show(aug_conf, Conf#{hookpoints => HookPoints}).
+    Conf#{hookpoints => HookPoints}.
 
 connector_config(ConnectorType, Config) ->
     Mod = connector_impl_module(ConnectorType),
