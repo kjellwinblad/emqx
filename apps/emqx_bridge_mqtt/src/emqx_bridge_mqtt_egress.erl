@@ -26,11 +26,6 @@
     send_async/4
 ]).
 
-%% management APIs
--export([
-    info/1
-]).
-
 -type message() :: emqx_types:message() | map().
 -type callback() :: {function(), [_Arg]} | {module(), atom(), [_Arg]}.
 -type remote_message() :: #mqtt_msg{}.
@@ -81,10 +76,3 @@ to_remote_msg(Msg = #{}, Remote) ->
         props = emqx_utils:pub_props_to_packet(PubProps),
         payload = Payload
     }.
-
-%%
-
--spec info(pid()) ->
-    [{atom(), term()}].
-info(Pid) ->
-    emqtt:info(Pid).

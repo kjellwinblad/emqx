@@ -19,11 +19,6 @@
 -include_lib("emqx/include/logger.hrl").
 -include_lib("emqx/include/emqx_mqtt.hrl").
 
--behaviour(ecpool_worker).
-
-%% ecpool
--export([connect/1]).
-
 %% management APIs
 -export([
     status/1,
@@ -34,98 +29,6 @@
 ]).
 
 -export([handle_publish/3]).
--export([handle_disconnect/1]).
-
--type name() :: term().
-
--type option() ::
-    {name, name()}
-    | {ingress, map()}
-    %% see `emqtt:option()`
-    | {client_opts, map()}.
-
-% -type ingress() :: #{
-%     server := string(),
-%     remote := #{
-%         topic := emqx_types:topic(),
-%         qos => emqx_types:qos()
-%     },
-%     local := emqx_bridge_mqtt_msg:msgvars(),
-%     on_message_received := {module(), atom(), [term()]}
-% }.
-
-%% @doc Start an ingress bridge worker.
--spec connect([option() | {ecpool_worker_id, pos_integer()}]) ->
-    {ok, pid()} | {error, _Reason}.
-connect(Options) ->
-    WorkerId = proplists:get_value(ecpool_worker_id, Options),
-    ?SLOG(debug, #{
-        msg => "ingress_client_starting",
-        options => emqx_utils:redact(Options)
-    }),
-    Name = proplists:get_value(name, Options),
-    WorkerId = proplists:get_value(ecpool_worker_id, Options),
-    % PoolSize = proplists:get_value(pool_size, Options),
-    WorkerId = proplists:get_value(ecpool_worker_id, Options),
-    ClientOpts = proplists:get_value(client_opts, Options),
-    case emqtt:start_link(mk_client_opts(Name, WorkerId, ClientOpts)) of
-        {ok, Pid} ->
-            connect(Pid, Name);
-        {error, Reason} = Error ->
-            ?SLOG(error, #{
-                msg => "client_start_failed",
-                config => emqx_utils:redact(ClientOpts),
-                reason => Reason
-            }),
-            Error
-    end.
-
-mk_client_opts(
-    Name,
-    WorkerId,
-    ClientOpts = #{
-        clientid := ClientId,
-        topic_to_handler_index := TopicToHandlerIndex
-    }
-) ->
-    ClientOpts#{
-        clientid := mk_clientid(WorkerId, ClientId),
-        msg_handler => mk_client_event_handler(Name, TopicToHandlerIndex)
-    }.
-
-mk_clientid(WorkerId, ClientId) ->
-    iolist_to_binary([ClientId, $: | integer_to_list(WorkerId)]).
-
-mk_client_event_handler(Name, TopicToHandlerIndex) ->
-    % IngressVars = maps:with([server], Ingress),
-    % OnMessage = maps:get(on_message_received, Ingress, undefined),
-    % LocalPublish =
-    %     case Ingress of
-    %         #{local := Local = #{topic := _}} ->
-    %             Local;
-    %         #{} ->
-    %             undefined
-    %     end,
-    #{
-        publish => {fun ?MODULE:handle_publish/3, [Name, TopicToHandlerIndex]},
-        disconnected => {fun ?MODULE:handle_disconnect/1, []}
-    }.
-
--spec connect(pid(), name()) ->
-    {ok, pid()} | {error, _Reason}.
-connect(Pid, Name) ->
-    case emqtt:connect(Pid) of
-        {ok, _Props} ->
-            {ok, Pid};
-        {error, Reason} = Error ->
-            ?SLOG(warning, #{
-                msg => "ingress_client_connect_failed",
-                reason => Reason,
-                name => Name
-            }),
-            _ = catch emqtt:stop(Pid),
-            Error
-    end.
 
 subscribe_channel(PoolName, ChannelConfig) ->
     Workers = ecpool:workers(PoolName),
@@ -366,9 +269,6 @@ handle_match(
     maybe_on_message_received(Msg, OnMessage),
     LocalPublish = maps:get(local, ChannelConfig, undefined),
     maybe_publish_local(Msg, LocalPublish, Props),
-    ok.
-
-handle_disconnect(_Reason) ->
     ok.
 
 maybe_on_message_received(Msg, {Mod, Func, Args}) ->

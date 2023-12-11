@@ -19,8 +19,13 @@
 -include_lib("emqx/include/logger.hrl").
 
 -behaviour(emqx_resource).
+-behaviour(ecpool_worker).
+
+%% ecpool
+-export([connect/1]).
 
 -export([on_message_received/3]).
+-export([handle_disconnect/1]).
 
 %% callbacks of behaviour emqx_resource
 -export([
@@ -38,6 +43,14 @@
 
 -export([on_async_result/2]).
 
+-type name() :: term().
+
+-type option() ::
+    {name, name()}
+    | {ingress, map()}
+    %% see `emqtt:option()`
+    | {client_opts, map()}.
+
 -define(HEALTH_CHECK_TIMEOUT, 1000).
 
 %% ===================================================================
@@ -46,7 +59,6 @@
 
 on_message_received(Msg, HookPoints, ResId) ->
     emqx_resource_metrics:received_inc(ResId),
-    erlang:display(hej_kjell),
     lists:foreach(
         fun(HookPoint) ->
             emqx_hooks:run(HookPoint, [Msg])
@@ -165,28 +177,28 @@ on_get_channel_status(
         installed_channels := Channels
     } = _State
 ) when is_map_key(ChannelId, Channels) ->
+    %% The channel should be ok as long as the MQTT client is ok
     connected.
 
 on_get_channels(ResId) ->
     emqx_bridge_v2:get_channels_for_connector(ResId).
 
 start_mqtt_clients(ResourceId, Conf) ->
-    ClientOpts = mk_client_opts(ResourceId, "ingress", Conf),
+    ClientOpts = mk_client_opts(ResourceId, Conf),
     start_mqtt_clients(ResourceId, Conf, ClientOpts).
 
-start_mqtt_clients(ResourceId, Ingress, ClientOpts) ->
-    PoolName = <<ResourceId/binary, ":ingress">>,
+start_mqtt_clients(ResourceId, StartConf, ClientOpts) ->
+    PoolName = <<ResourceId/binary>>,
     #{
         pool_size := PoolSize
-    } = Ingress,
+    } = StartConf,
     Options = [
         {name, PoolName},
         {pool_size, PoolSize},
-        {ingress, Ingress},
         {client_opts, ClientOpts}
     ],
     ok = emqx_resource:allocate_resource(ResourceId, pool_name, PoolName),
-    case emqx_resource_pool:start(PoolName, emqx_bridge_mqtt_ingress, Options) of
+    case emqx_resource_pool:start(PoolName, ?MODULE, Options) of
         ok ->
             {ok, #{pool_name => PoolName}};
         {error, {start_pool_failed, _, Reason}} ->
@@ -199,12 +211,10 @@ on_stop(ResourceId, _State) ->
         connector => ResourceId
     }),
     Allocated = emqx_resource:get_allocated_resources(ResourceId),
-    ok = stop_ingress(Allocated).
+    ok = stop_helper(Allocated).
 
-stop_ingress(#{pool_name := PoolName}) ->
-    emqx_resource_pool:stop(PoolName);
-stop_ingress(#{}) ->
-    ok.
+stop_helper(#{pool_name := PoolName}) ->
+    emqx_resource_pool:stop(PoolName).
 
 on_query(
     ResourceId,
@@ -309,7 +319,7 @@ on_get_status(_ResourceId, State) ->
             connecting
     end.
 
-get_status({Pool, Worker}) ->
+get_status({_Pool, Worker}) ->
     case ecpool_worker:client(Worker) of
         {ok, Client} ->
             emqx_bridge_mqtt_ingress:status(Client);
@@ -343,7 +353,6 @@ mk_ingress_config(
 
 mk_client_opts(
     ResourceId,
-    ClientScope,
     Config = #{
         server := Server,
         keepalive := KeepAlive,
@@ -370,7 +379,7 @@ mk_client_opts(
     ),
     mk_client_opt_password(Options#{
         hosts => [HostPort],
-        clientid => clientid(ResourceId, ClientScope, Config),
+        clientid => clientid(ResourceId, Config),
         connect_timeout => 30,
         keepalive => ms_to_s(KeepAlive),
         force_ping => true,
@@ -387,7 +396,73 @@ mk_client_opt_password(Options) ->
 ms_to_s(Ms) ->
     erlang:ceil(Ms / 1000).
 
-clientid(Id, ClientScope, _Conf = #{clientid_prefix := Prefix}) when is_binary(Prefix) ->
-    iolist_to_binary([Prefix, ":", Id, ":", ClientScope, ":", atom_to_list(node())]);
-clientid(Id, ClientScope, _Conf) ->
-    iolist_to_binary([Id, ":", ClientScope, ":", atom_to_list(node())]).
+clientid(Id, _Conf = #{clientid_prefix := Prefix}) when is_binary(Prefix) ->
+    iolist_to_binary([Prefix, ":", Id, ":", atom_to_list(node())]);
+clientid(Id, _Conf) ->
+    iolist_to_binary([Id, ":", atom_to_list(node())]).
+
+%% @doc Start an ingress bridge worker.
+-spec connect([option() | {ecpool_worker_id, pos_integer()}]) ->
+    {ok, pid()} | {error, _Reason}.
+connect(Options) ->
+    WorkerId = proplists:get_value(ecpool_worker_id, Options),
+    ?SLOG(debug, #{
+        msg => "ingress_client_starting",
+        options => emqx_utils:redact(Options)
+    }),
+    Name = proplists:get_value(name, Options),
+    WorkerId = proplists:get_value(ecpool_worker_id, Options),
+    WorkerId = proplists:get_value(ecpool_worker_id, Options),
+    ClientOpts = proplists:get_value(client_opts, Options),
+    case emqtt:start_link(mk_client_opts(Name, WorkerId, ClientOpts)) of
+        {ok, Pid} ->
+            connect(Pid, Name);
+        {error, Reason} = Error ->
+            ?SLOG(error, #{
+                msg => "client_start_failed",
+                config => emqx_utils:redact(ClientOpts),
+                reason => Reason
+            }),
+            Error
+    end.
+
+mk_client_opts(
+    Name,
+    WorkerId,
+    ClientOpts = #{
+        clientid := ClientId,
+        topic_to_handler_index := TopicToHandlerIndex
+    }
+) ->
+    ClientOpts#{
+        clientid := mk_clientid(WorkerId, ClientId),
+        msg_handler => mk_client_event_handler(Name, TopicToHandlerIndex)
+    }.
+
+mk_clientid(WorkerId, ClientId) ->
+    iolist_to_binary([ClientId, $: | integer_to_list(WorkerId)]).
+
+mk_client_event_handler(Name, TopicToHandlerIndex) ->
+    #{
+        publish => {fun emqx_bridge_mqtt_ingress:handle_publish/3, [Name, TopicToHandlerIndex]},
+        disconnected => {fun ?MODULE:handle_disconnect/1, []}
+    }.
+
+-spec connect(pid(), name()) ->
+    {ok, pid()} | {error, _Reason}.
+connect(Pid, Name) ->
+    case emqtt:connect(Pid) of
+        {ok, _Props} ->
+            {ok, Pid};
+        {error, Reason} = Error ->
+            ?SLOG(warning, #{
+                msg => "ingress_client_connect_failed",
+                reason => Reason,
+                name => Name
+            }),
+            _ = catch emqtt:stop(Pid),
+            Error
+    end.
+
+handle_disconnect(_Reason) ->
+    ok.
