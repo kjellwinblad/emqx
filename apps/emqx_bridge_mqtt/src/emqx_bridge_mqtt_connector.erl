@@ -45,17 +45,15 @@
 %% if the bridge received msgs from the remote broker.
 
 on_message_received(Msg, HookPoints, ResId) ->
-    x:show(
-        hej_TODO_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx_on_message_received, {Msg, HookPoints, ResId}
-    ),
-    erlang:halt(),
     emqx_resource_metrics:received_inc(ResId),
+    erlang:display(hej_kjell),
     lists:foreach(
         fun(HookPoint) ->
             emqx_hooks:run(HookPoint, [Msg])
         end,
         HookPoints
-    ).
+    ),
+    ok.
 
 %% ===================================================================
 callback_mode() -> async_if_possible.
@@ -70,13 +68,6 @@ on_start(ResourceId, #{server := Server} = Conf) ->
     StartIngressConf = Conf#{topic_to_handler_index => TopicToHandlerIndex},
     case start_ingress(ResourceId, StartIngressConf) of
         {ok, Result1} ->
-            % case start_egress(ResourceId, Conf) of
-            %     {ok, Result2} ->
-            %         {ok, Result2#{installed_channels => #{}}};
-            %     {error, Reason} ->
-            %         _ = stop_ingress(Result1),
-            %         {error, Reason}
-            % end;
             {ok, Result1#{
                 installed_channels => #{},
                 clean_start => maps:get(clean_start, Conf),
@@ -90,12 +81,11 @@ on_start(ResourceId, #{server := Server} = Conf) ->
 on_add_channel(
     _InstId,
     #{
-        config_root := actions,
         installed_channels := InstalledChannels,
         clean_start := CleanStart
     } = OldState,
     ChannelId,
-    ChannelConfig
+    #{config_root := actions} = ChannelConfig
 ) ->
     %% Publisher channel
     %% make a warning if clean_start is set to false

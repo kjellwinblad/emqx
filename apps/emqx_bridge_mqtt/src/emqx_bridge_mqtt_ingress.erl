@@ -299,6 +299,7 @@ handle_match(
     [ChannelConfig] = emqx_topic_index:get_record(Match, TopicToHandlerIndex),
     #{on_message_received := OnMessage} = ChannelConfig,
     Msg = import_msg(MsgIn, ChannelConfig),
+
     maybe_on_message_received(Msg, OnMessage),
     LocalPublish = maps:get(local, ChannelConfig, undefined),
     maybe_publish_local(Msg, LocalPublish, Props),
