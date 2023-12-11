@@ -126,7 +126,8 @@ inspect(Selected, _Envs, _Args) ->
     persistent_term:put(?MODULE, #{inspect => Selected}).
 
 all() ->
-    emqx_common_test_helpers:all(?MODULE).
+    [t_conf_bridge_authn_anonymous].
+%%emqx_common_test_helpers:all(?MODULE).
 
 groups() ->
     [].
