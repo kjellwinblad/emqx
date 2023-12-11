@@ -130,7 +130,7 @@ subscribe_channel(PoolName, ChannelConfig) ->
     Workers = ecpool:workers(PoolName),
     PoolSize = length(Workers),
     Results = [
-        subscribe_channel(Pid, Name, ChannelConfig, Idx =:= 1, PoolSize)
+        subscribe_channel(Pid, Name, ChannelConfig, Idx, PoolSize)
      || {{Name, Idx}, Pid} <- Workers
     ],
     case proplists:get_value(error, Results, ok) of
@@ -140,18 +140,18 @@ subscribe_channel(PoolName, ChannelConfig) ->
             Error
     end.
 
-subscribe_channel(WorkerPid, Name, Ingress, IsFirstWorker, PoolSize) ->
+subscribe_channel(WorkerPid, Name, Ingress, WorkerIdx, PoolSize) ->
     case ecpool_worker:client(WorkerPid) of
         {ok, Client} ->
-            subscribe_channel_helper(Client, Name, Ingress, IsFirstWorker, PoolSize);
+            subscribe_channel_helper(Client, Name, Ingress, WorkerIdx, PoolSize);
         {error, Reason} ->
             error({client_not_found, Reason})
     end.
 
-subscribe_channel_helper(Client, Name, Ingress, IsFirstWorker, PoolSize) ->
+subscribe_channel_helper(Client, Name, Ingress, WorkerIdx, PoolSize) ->
     IngressList = maps:get(ingress_list, Ingress, []),
     SubscribeResults = subscribe_remote_topics(
-        Client, IngressList, IsFirstWorker, PoolSize, Name
+        Client, IngressList, WorkerIdx, PoolSize, Name
     ),
     %% Find error if any using proplists:get_value/2
     case proplists:get_value(error, SubscribeResults, ok) of
@@ -167,25 +167,26 @@ subscribe_channel_helper(Client, Name, Ingress, IsFirstWorker, PoolSize) ->
             Error
     end.
 
-subscribe_remote_topics(Pid, IngressList, IsFirstWorker, PoolSize, Name) ->
-    [subscribe_remote_topic(Pid, Ingress, IsFirstWorker, PoolSize, Name) || Ingress <- IngressList].
+subscribe_remote_topics(Pid, IngressList, WorkerIdx, PoolSize, Name) ->
+    [subscribe_remote_topic(Pid, Ingress, WorkerIdx, PoolSize, Name) || Ingress <- IngressList].
 
 subscribe_remote_topic(
-    Pid, #{remote := #{topic := RemoteTopic, qos := QoS}} = _Remote, IsFirstWorker, PoolSize, Name
+    Pid, #{remote := #{topic := RemoteTopic, qos := QoS}} = _Remote, WorkerIdx, PoolSize, Name
 ) ->
-    case should_subscribe(RemoteTopic, IsFirstWorker, PoolSize, Name) of
+    case should_subscribe(RemoteTopic, WorkerIdx, PoolSize, Name) of
         true ->
             emqtt:subscribe(Pid, RemoteTopic, QoS);
         false ->
             ok
     end.
 
-should_subscribe(RemoteTopic, IsFirstWorker, PoolSize, Name) ->
+should_subscribe(RemoteTopic, WorkerIdx, PoolSize, Name) ->
+    IsFirstWorker = WorkerIdx == 1,
     case emqx_topic:parse(RemoteTopic) of
         {#share{} = _Filter, _SubOpts} ->
             % NOTE: this is shared subscription, many workers may subscribe
             true;
-        {_Filter, #{}} when PoolSize > 1 ->
+        {_Filter, #{}} when PoolSize > 1, IsFirstWorker ->
             % NOTE: this is regular subscription, only one worker should subscribe
             ?SLOG(warning, #{
                 msg => "mqtt_pool_size_ignored",
@@ -194,10 +195,10 @@ should_subscribe(RemoteTopic, IsFirstWorker, PoolSize, Name) ->
                     "Remote topic filter is not a shared subscription, "
                     "only a single connection will be used from the connection pool",
                 config_pool_size => PoolSize,
-                pool_size => 1
+                pool_size => PoolSize
             }),
             IsFirstWorker;
-        {_Filter, #{}} when PoolSize == 1 ->
+        {_Filter, #{}} ->
             % NOTE: this is regular subscription, only one worker should subscribe
             IsFirstWorker
     end.
