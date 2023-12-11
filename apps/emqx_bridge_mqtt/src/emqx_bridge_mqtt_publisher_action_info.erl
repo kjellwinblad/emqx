@@ -169,8 +169,6 @@ check_and_simplify_bridge_v1_config(SimplifiedConfig) ->
 connector_action_config_to_bridge_v1_config(
     ConnectorConfig, ActionConfig
 ) ->
-    x:show(org_con_conf, ConnectorConfig),
-    x:show(org_act_conf, ActionConfig),
     Params = maps:get(<<"parameters">>, ActionConfig, #{}),
     ResourceOptsConnector = maps:get(<<"resource_opts">>, ConnectorConfig, #{}),
     ResourceOptsAction = maps:get(<<"resource_opts">>, ActionConfig, #{}),
@@ -192,5 +190,4 @@ connector_action_config_to_bridge_v1_config(
     BridgeV1Conf2 = BridgeV1Conf1#{
         <<"resource_opts">> => ResourceOpts
     },
-    x:show(merged_conf, BridgeV1Conf2),
     BridgeV1Conf2.

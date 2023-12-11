@@ -97,7 +97,7 @@ fields("config_connector") ->
         %     )}
     ] ++ fields("server_configs");
 fields(creation_opts) ->
-    x:show(fields_xxxxxxxxxxxxxx, emqx_connector_schema:resource_opts_fields());
+    emqx_connector_schema:resource_opts_fields();
 fields("server_configs") ->
     [
         {mode,

@@ -45,7 +45,9 @@
 %% if the bridge received msgs from the remote broker.
 
 on_message_received(Msg, HookPoints, ResId) ->
-    x:show(xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx_on_message_received, {Msg, HookPoints, ResId}),
+    x:show(
+        hej_TODO_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx_on_message_received, {Msg, HookPoints, ResId}
+    ),
     erlang:halt(),
     emqx_resource_metrics:received_inc(ResId),
     lists:foreach(
@@ -59,7 +61,6 @@ on_message_received(Msg, HookPoints, ResId) ->
 callback_mode() -> async_if_possible.
 
 on_start(ResourceId, #{server := Server} = Conf) ->
-    x:show(xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx_start_should_not_happen, Conf),
     ?SLOG(info, #{
         msg => "starting_mqtt_connector",
         connector => ResourceId,
@@ -97,11 +98,9 @@ on_add_channel(
     ChannelConfig
 ) ->
     %% Publisher channel
-    x:show(on_add_channel, ChannelConfig),
     %% make a warning if clean_start is set to false
     case CleanStart of
         false ->
-            x:show(on_add_channel_clean_start_false, ChannelConfig),
             ?SLOG(warning, #{
                 msg => "mqtt_publisher_clean_start_false",
                 reason => "clean_start is set to false when using MQTT publisher action, " ++
@@ -131,14 +130,10 @@ on_add_channel(
     ChannelId,
     #{hookpoints := HookPoints} = ChannelConfig
 ) ->
-    x:show(on_add_channel_subscriber, ChannelConfig),
-
     ChannelState0 = maps:get(parameters, ChannelConfig),
     ChannelState1 = ChannelState0#{hookpoints => HookPoints, server => Server},
     ChannelState2 = mk_ingress_config(ChannelId, ChannelState1, TopicToHandlerIndex),
 
-    x:show(channel_state_1, ChannelState2),
-    x:show(tab2list, ets:tab2list(TopicToHandlerIndex)),
     NewInstalledChannels = maps:put(ChannelId, ChannelState2, InstalledChannels),
     %% Update state
     NewState = OldState#{installed_channels => NewInstalledChannels},

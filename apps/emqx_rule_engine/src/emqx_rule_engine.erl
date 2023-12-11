@@ -628,8 +628,8 @@ validate_bridge_existence_in_actions(#{actions := Actions, from := Froms} = _Rul
     BridgeIDs1 =
         lists:filtermap(
             fun
-                ({bridge_v2, Type, Name}) -> x:show(aaaaaaaaaaaaa, {true, {Type, Name}});
-                ({bridge, Type, Name, _ResId}) -> x:show(bbbbbbbbbbb, {true, {Type, Name}});
+                ({bridge_v2, Type, Name}) -> {true, {Type, Name}};
+                ({bridge, Type, Name, _ResId}) -> {true, {Type, Name}};
                 (_) -> false
             end,
             Actions

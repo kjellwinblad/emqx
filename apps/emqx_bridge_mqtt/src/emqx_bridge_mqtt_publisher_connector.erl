@@ -51,7 +51,6 @@ on_message_received(Msg, HookPoint, ResId) ->
 callback_mode() -> async_if_possible.
 
 on_start(ResourceId, Conf) ->
-    x:show(xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx_start_publisher, Conf),
     ?SLOG(info, #{
         msg => "starting_mqtt_connector",
         connector => ResourceId,

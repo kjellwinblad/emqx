@@ -410,14 +410,13 @@ augment_channel_config(
         bridge_type => bin(BridgeV2Type),
         bridge_name => bin(BridgeName)
     },
-    x:show(augmented_conf, {emqx_action_info:is_source(BridgeV2Type), AugmentedConf}),
     case emqx_action_info:is_source(BridgeV2Type) of
         true ->
             BId = emqx_bridge_resource:bridge_id(BridgeV2Type, BridgeName),
             BridgeHookpoint = emqx_bridge_resource:bridge_hookpoint(BId),
             SourceHookpoint = source_hookpoint(BId),
             HookPoints = [BridgeHookpoint, SourceHookpoint],
-            x:show(augmented_conf2, AugmentedConf#{hookpoints => HookPoints});
+            AugmentedConf#{hookpoints => HookPoints};
         false ->
             AugmentedConf
     end.

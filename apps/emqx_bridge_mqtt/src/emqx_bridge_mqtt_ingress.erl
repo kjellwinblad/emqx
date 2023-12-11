@@ -67,7 +67,7 @@ connect(Options) ->
     % PoolSize = proplists:get_value(pool_size, Options),
     WorkerId = proplists:get_value(ecpool_worker_id, Options),
     ClientOpts = proplists:get_value(client_opts, Options),
-    case emqtt:start_link(x:show(sub_with_opts, mk_client_opts(Name, WorkerId, ClientOpts))) of
+    case emqtt:start_link(mk_client_opts(Name, WorkerId, ClientOpts)) of
         {ok, Pid} ->
             connect(Pid, Name);
         {error, Reason} = Error ->
@@ -87,7 +87,6 @@ mk_client_opts(
         topic_to_handler_index := TopicToHandlerIndex
     }
 ) ->
-    x:show(mk_client_opts, ClientOpts),
     ClientOpts#{
         clientid := mk_clientid(WorkerId, ClientId),
         msg_handler => mk_client_event_handler(Name, TopicToHandlerIndex)
@@ -129,7 +128,6 @@ connect(Pid, Name) ->
 
 subscribe_channel(PoolName, ChannelConfig) ->
     Workers = ecpool:workers(PoolName),
-    x:show(workers, Workers),
     PoolSize = length(Workers),
     Results = [
         subscribe_channel(Pid, Name, ChannelConfig, Idx =:= 1, PoolSize)
@@ -143,12 +141,8 @@ subscribe_channel(PoolName, ChannelConfig) ->
     end.
 
 subscribe_channel(WorkerPid, Name, Ingress, IsFirstWorker, PoolSize) ->
-    x:show(worker_pid_sub, WorkerPid),
     case ecpool_worker:client(WorkerPid) of
         {ok, Client} ->
-            x:show(client_sub, Client),
-            x:show(my_ingress, Ingress),
-
             subscribe_channel_helper(Client, Name, Ingress, IsFirstWorker, PoolSize);
         {error, Reason} ->
             error({client_not_found, Reason})
@@ -162,7 +156,6 @@ subscribe_channel_helper(Client, Name, Ingress, IsFirstWorker, PoolSize) ->
     %% Find error if any using proplists:get_value/2
     case proplists:get_value(error, SubscribeResults, ok) of
         ok ->
-            x:show(subscribe_channel_helper, SubscribeResults),
             ok;
         {error, Reason} = Error ->
             ?SLOG(error, #{
@@ -175,15 +168,13 @@ subscribe_channel_helper(Client, Name, Ingress, IsFirstWorker, PoolSize) ->
     end.
 
 subscribe_remote_topics(Pid, IngressList, IsFirstWorker, PoolSize, Name) ->
-    x:show(ingress_list, IngressList),
     [subscribe_remote_topic(Pid, Ingress, IsFirstWorker, PoolSize, Name) || Ingress <- IngressList].
 
 subscribe_remote_topic(
-    Pid, #{remote := #{topic := RemoteTopic, qos := QoS}} = Remote, IsFirstWorker, PoolSize, Name
+    Pid, #{remote := #{topic := RemoteTopic, qos := QoS}} = _Remote, IsFirstWorker, PoolSize, Name
 ) ->
     case should_subscribe(RemoteTopic, IsFirstWorker, PoolSize, Name) of
         true ->
-            x:show(subscribe_remote_topic_2, {RemoteTopic, QoS, Remote}),
             emqtt:subscribe(Pid, RemoteTopic, QoS);
         false ->
             ok
@@ -278,12 +269,9 @@ handle_publish(
     LocalPublish,
     IngressVars
 ) ->
-    x:show(handle_publish_6, {self(), MsgIn, Name, TopicToHandlerIndex, LocalPublish, IngressVars}),
     Matches = emqx_topic_index:matches(Topic, TopicToHandlerIndex, []),
-    x:show(handlers, Matches),
     lists:foreach(
         fun(Match) ->
-            x:show(match, Match),
             handle_match(TopicToHandlerIndex, Match, MsgIn, Name)
         end,
         Matches
@@ -305,30 +293,16 @@ handle_match(
     Name
 ) ->
     [ChannelConfig] = emqx_topic_index:get_record(Match, TopicToHandlerIndex),
-    x:show(handle_match_2, {ChannelConfig, MsgIn, Name}),
-    OnMessage =
-        try
-            x:show(what, maps:get(on_message_received, ChannelConfig, nothing)),
-            #{on_message_received := OnMsg} = ChannelConfig,
-            OnMsg
-        catch
-            _:_ ->
-                x:show(what_the_fuck, ChannelConfig),
-                erlang:halt()
-        end,
+    #{on_message_received := OnMessage} = ChannelConfig,
     Msg = import_msg(MsgIn, ChannelConfig),
     maybe_on_message_received(Msg, OnMessage),
     %%maybe_publish_local(Msg, LocalPublish, Props)
-
-    x:show(record, ChannelConfig),
-    x:show(handle_match_4, {ChannelConfig, Msg, Name}),
     ok.
 
 handle_disconnect(_Reason) ->
     ok.
 
 maybe_on_message_received(Msg, {Mod, Func, Args}) ->
-    x:show(do_apply, {Mod, Func, [Msg | Args]}),
     erlang:apply(Mod, Func, [Msg | Args]);
 maybe_on_message_received(_Msg, undefined) ->
     ok.

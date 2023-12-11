@@ -160,7 +160,7 @@ del(HookPoint, Action) ->
 -spec run(hookpoint(), list(Arg :: term())) -> ok.
 run(HookPoint, Args) ->
     ok = emqx_hookpoints:verify_hookpoint(HookPoint),
-    do_run(x:show(lookup_hook, lookup(HookPoint)), Args).
+    do_run(lookup(HookPoint), Args).
 
 %% @doc Run hooks with Accumulator.
 -spec run_fold(hookpoint(), list(Arg :: term()), Acc :: term()) -> Acc :: term().
