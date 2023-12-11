@@ -32,7 +32,7 @@
     config/3
 ]).
 
--export([handle_publish/5]).
+-export([handle_publish/3]).
 -export([handle_disconnect/1]).
 
 -type name() :: term().
@@ -43,15 +43,15 @@
     %% see `emqtt:option()`
     | {client_opts, map()}.
 
--type ingress() :: #{
-    server := string(),
-    remote := #{
-        topic := emqx_types:topic(),
-        qos => emqx_types:qos()
-    },
-    local := emqx_bridge_mqtt_msg:msgvars(),
-    on_message_received := {module(), atom(), [term()]}
-}.
+% -type ingress() :: #{
+%     server := string(),
+%     remote := #{
+%         topic := emqx_types:topic(),
+%         qos => emqx_types:qos()
+%     },
+%     local := emqx_bridge_mqtt_msg:msgvars(),
+%     on_message_received := {module(), atom(), [term()]}
+% }.
 
 %% @doc Start an ingress bridge worker.
 -spec connect([option() | {ecpool_worker_id, pos_integer()}]) ->
@@ -106,7 +106,7 @@ mk_client_event_handler(Name, TopicToHandlerIndex) ->
     %             undefined
     %     end,
     #{
-        publish => {fun ?MODULE:handle_publish/5, [Name, TopicToHandlerIndex, none, none]},
+        publish => {fun ?MODULE:handle_publish/3, [Name, TopicToHandlerIndex]},
         disconnected => {fun ?MODULE:handle_disconnect/1, []}
     }.
 
@@ -213,12 +213,19 @@ config(#{ingress_list := IngressList} = Conf, Name, TopicToHandlerIndex) ->
     Conf#{ingress_list => NewIngressList}.
 
 fix_remote_config(#{remote := RC, local := LC}, BridgeName, TopicToHandlerIndex, Conf) ->
-    Conf#{
-        remote => parse_remote(RC, BridgeName, TopicToHandlerIndex, Conf),
+    FixedConf = Conf#{
+        remote => parse_remote(RC, BridgeName),
         local => emqx_bridge_mqtt_msg:parse(LC)
-    }.
+    },
+    insert_to_topic_to_handler_index(FixedConf, TopicToHandlerIndex, BridgeName),
+    FixedConf.
 
-parse_remote(#{qos := QoSIn, topic := Topic} = Remote, BridgeName, TopicToHandlerIndex, Conf) ->
+insert_to_topic_to_handler_index(
+    #{remote := #{topic := Topic}} = Conf, TopicToHandlerIndex, BridgeName
+) ->
+    emqx_topic_index:insert(Topic, BridgeName, Conf, TopicToHandlerIndex).
+
+parse_remote(#{qos := QoSIn} = Remote, BridgeName) ->
     QoS = downgrade_ingress_qos(QoSIn),
     case QoS of
         QoSIn ->
@@ -231,7 +238,6 @@ parse_remote(#{qos := QoSIn, topic := Topic} = Remote, BridgeName, TopicToHandle
                 name => BridgeName
             })
     end,
-    emqx_topic_index:insert(Topic, BridgeName, Conf, TopicToHandlerIndex),
     Remote#{qos => QoS}.
 
 downgrade_ingress_qos(2) ->
@@ -264,16 +270,14 @@ status(Pid) ->
 %%
 
 handle_publish(
-    #{properties := _Props, topic := Topic} = MsgIn,
+    #{properties := Props, topic := Topic} = MsgIn,
     Name,
-    TopicToHandlerIndex,
-    LocalPublish,
-    IngressVars
+    TopicToHandlerIndex
 ) ->
     Matches = emqx_topic_index:matches(Topic, TopicToHandlerIndex, []),
     lists:foreach(
         fun(Match) ->
-            handle_match(TopicToHandlerIndex, Match, MsgIn, Name)
+            handle_match(TopicToHandlerIndex, Match, MsgIn, Name, Props)
         end,
         Matches
     ),
@@ -283,21 +287,21 @@ handle_publish(
         message => MsgIn,
         name => Name
     }),
-    %% maybe_on_message_received(Msg, OnMessage),
-    %% maybe_publish_local(Msg, LocalPublish, Props)
     ok.
 
 handle_match(
     TopicToHandlerIndex,
     Match,
     MsgIn,
-    Name
+    _Name,
+    Props
 ) ->
     [ChannelConfig] = emqx_topic_index:get_record(Match, TopicToHandlerIndex),
     #{on_message_received := OnMessage} = ChannelConfig,
     Msg = import_msg(MsgIn, ChannelConfig),
     maybe_on_message_received(Msg, OnMessage),
-    %%maybe_publish_local(Msg, LocalPublish, Props)
+    LocalPublish = maps:get(local, ChannelConfig, undefined),
+    maybe_publish_local(Msg, LocalPublish, Props),
     ok.
 
 handle_disconnect(_Reason) ->
