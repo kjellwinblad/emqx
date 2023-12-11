@@ -29,6 +29,7 @@
     status/1,
     info/1,
     subscribe_channel/2,
+    unsubscribe_channel/4,
     config/3
 ]).
 
@@ -173,20 +174,20 @@ subscribe_remote_topics(Pid, IngressList, WorkerIdx, PoolSize, Name) ->
 subscribe_remote_topic(
     Pid, #{remote := #{topic := RemoteTopic, qos := QoS}} = _Remote, WorkerIdx, PoolSize, Name
 ) ->
-    case should_subscribe(RemoteTopic, WorkerIdx, PoolSize, Name) of
+    case should_subscribe(RemoteTopic, WorkerIdx, PoolSize, Name, _LogWarn = true) of
         true ->
             emqtt:subscribe(Pid, RemoteTopic, QoS);
         false ->
             ok
     end.
 
-should_subscribe(RemoteTopic, WorkerIdx, PoolSize, Name) ->
+should_subscribe(RemoteTopic, WorkerIdx, PoolSize, Name, LogWarn) ->
     IsFirstWorker = WorkerIdx == 1,
     case emqx_topic:parse(RemoteTopic) of
         {#share{} = _Filter, _SubOpts} ->
             % NOTE: this is shared subscription, many workers may subscribe
             true;
-        {_Filter, #{}} when PoolSize > 1, IsFirstWorker ->
+        {_Filter, #{}} when PoolSize > 1, IsFirstWorker, LogWarn ->
             % NOTE: this is regular subscription, only one worker should subscribe
             ?SLOG(warning, #{
                 msg => "mqtt_pool_size_ignored",
@@ -203,7 +204,69 @@ should_subscribe(RemoteTopic, WorkerIdx, PoolSize, Name) ->
             IsFirstWorker
     end.
 
-%%
+unsubscribe_channel(PoolName, ChannelConfig, ChannelId, TopicToHandlerIndex) ->
+    Workers = ecpool:workers(PoolName),
+    PoolSize = length(Workers),
+    [
+        unsubscribe_channel(Pid, Name, ChannelConfig, Idx, PoolSize, ChannelId, TopicToHandlerIndex)
+     || {{Name, Idx}, Pid} <- Workers
+    ],
+    ok.
+
+unsubscribe_channel(WorkerPid, Name, Ingress, WorkerIdx, PoolSize, ChannelId, TopicToHandlerIndex) ->
+    case ecpool_worker:client(WorkerPid) of
+        {ok, Client} ->
+            unsubscribe_channel_helper(
+                Client, Name, Ingress, WorkerIdx, PoolSize, ChannelId, TopicToHandlerIndex
+            );
+        {error, Reason} ->
+            error({client_not_found, Reason})
+    end.
+
+unsubscribe_channel_helper(
+    Client, Name, Ingress, WorkerIdx, PoolSize, ChannelId, TopicToHandlerIndex
+) ->
+    IngressList = maps:get(ingress_list, Ingress, []),
+    unsubscribe_remote_topics(
+        Client, IngressList, WorkerIdx, PoolSize, Name, ChannelId, TopicToHandlerIndex
+    ).
+
+unsubscribe_remote_topics(
+    Pid, IngressList, WorkerIdx, PoolSize, Name, ChannelId, TopicToHandlerIndex
+) ->
+    [
+        unsubscribe_remote_topic(
+            Pid, Ingress, WorkerIdx, PoolSize, Name, ChannelId, TopicToHandlerIndex
+        )
+     || Ingress <- IngressList
+    ].
+
+unsubscribe_remote_topic(
+    Pid,
+    #{remote := #{topic := RemoteTopic}} = _Remote,
+    WorkerIdx,
+    PoolSize,
+    Name,
+    ChannelId,
+    TopicToHandlerIndex
+) ->
+    emqx_topic_index:delete(RemoteTopic, ChannelId, TopicToHandlerIndex),
+    case should_subscribe(RemoteTopic, WorkerIdx, PoolSize, Name, _NoWarn = false) of
+        true ->
+            case emqtt:unsubscribe(Pid, RemoteTopic) of
+                {ok, _Properties, _ReasonCodes} ->
+                    ok;
+                {error, Reason} ->
+                    ?SLOG(warning, #{
+                        msg => "unsubscribe_mqtt_topic_failed",
+                        channel_id => Name,
+                        reason => Reason
+                    }),
+                    ok
+            end;
+        false ->
+            ok
+    end.
 
 config(#{ingress_list := IngressList} = Conf, Name, TopicToHandlerIndex) ->
     NewIngressList = [
