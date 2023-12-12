@@ -174,7 +174,14 @@ connector_action_config_to_bridge_v1_config(
     ResourceOptsAction = maps:get(<<"resource_opts">>, ActionConfig, #{}),
     ResourceOpts = maps:merge(ResourceOptsConnector, ResourceOptsAction),
     %% Check the direction of the action
-    Direction = maps:get(<<"direction">>, Params, <<"publisher">>),
+    Direction =
+        case maps:get(<<"remote">>, Params) of
+            #{<<"retain">> := _} ->
+                %% Only source has retain
+                <<"publisher">>;
+            _ ->
+                <<"subscriber">>
+        end,
     Parms2 = maps:remove(<<"direction">>, Params),
     PoolSize = maps:get(<<"pool_size">>, ConnectorConfig, 1),
     Parms3 = maps:put(<<"pool_size">>, PoolSize, Parms2),

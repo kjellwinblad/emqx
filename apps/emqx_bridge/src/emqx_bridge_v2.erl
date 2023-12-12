@@ -39,7 +39,9 @@
 
 -export([
     list/0,
+    list/1,
     lookup/2,
+    lookup/3,
     create/3,
     %% The remove/2 function is only for internal use as it may create
     %% rules with broken dependencies
@@ -197,7 +199,12 @@ unload_bridges() ->
 
 -spec lookup(bridge_v2_type(), bridge_v2_name()) -> {ok, bridge_v2_info()} | {error, not_found}.
 lookup(Type, Name) ->
-    case emqx:get_raw_config([?ROOT_KEY_ACTIONS, Type, Name], not_found) of
+    lookup(?ROOT_KEY_ACTIONS, Type, Name).
+
+-spec lookup(sources | actions, bridge_v2_type(), bridge_v2_name()) ->
+    {ok, bridge_v2_info()} | {error, not_found}.
+lookup(ConfRootName, Type, Name) ->
+    case emqx:get_raw_config([ConfRootName, Type, Name], not_found) of
         not_found ->
             {error, not_found};
         #{<<"connector">> := BridgeConnector} = RawConf ->
@@ -217,7 +224,7 @@ lookup(Type, Name) ->
             %% Find the Bridge V2 status from the ConnectorData
             ConnectorStatus = maps:get(status, ConnectorData, undefined),
             Channels = maps:get(added_channels, ConnectorData, #{}),
-            BridgeV2Id = id(Type, Name, BridgeConnector),
+            BridgeV2Id = id_with_root_name(ConfRootName, Type, Name, BridgeConnector),
             ChannelStatus = maps:get(BridgeV2Id, Channels, undefined),
             {DisplayBridgeV2Status, ErrorMsg} =
                 case {ChannelStatus, ConnectorStatus} of
@@ -244,7 +251,13 @@ lookup(Type, Name) ->
 
 -spec list() -> [bridge_v2_info()] | {error, term()}.
 list() ->
-    list_with_lookup_fun(fun lookup/2).
+    list_with_lookup_fun(?ROOT_KEY_ACTIONS, fun lookup/2).
+
+list(ConfRootKey) ->
+    LookupFun = fun(Type, Name) ->
+        lookup(ConfRootKey, Type, Name)
+    end,
+    list_with_lookup_fun(ConfRootKey, LookupFun).
 
 -spec create(bridge_v2_type(), bridge_v2_name(), map()) ->
     {ok, emqx_config:update_result()} | {error, any()}.
@@ -307,7 +320,7 @@ check_deps_and_remove(BridgeType, BridgeName, AlsoDeleteActions) ->
 %% Helpers for CRUD API
 %%--------------------------------------------------------------------
 
-list_with_lookup_fun(LookupFun) ->
+list_with_lookup_fun(ConfRootName, LookupFun) ->
     maps:fold(
         fun(Type, NameAndConf, Bridges) ->
             maps:fold(
@@ -330,7 +343,7 @@ list_with_lookup_fun(LookupFun) ->
             )
         end,
         [],
-        emqx:get_raw_config([?ROOT_KEY_ACTIONS], #{})
+        emqx:get_raw_config([ConfRootName], #{})
     ).
 
 install_bridge_v2(
@@ -1142,12 +1155,33 @@ is_bridge_v2_type(Type) ->
     emqx_action_info:is_action_type(Type).
 
 bridge_v1_list_and_transform() ->
-    Bridges = list_with_lookup_fun(fun bridge_v1_lookup_and_transform/2),
-    [B || B <- Bridges, B =/= not_bridge_v1_compatible_error()].
+    BridgesFromActions0 = list_with_lookup_fun(
+        ?ROOT_KEY_ACTIONS,
+        fun bridge_v1_lookup_and_transform/2
+    ),
+    BridgesFromActions1 = [
+        B
+     || B <- BridgesFromActions0,
+        B =/= not_bridge_v1_compatible_error()
+    ],
+    FromActionsNames = maps:from_keys([Name || #{name := Name} <- BridgesFromActions1], true),
+    BridgesFromSources0 = list_with_lookup_fun(
+        ?ROOT_KEY_SOURCES,
+        fun bridge_v1_lookup_and_transform/2
+    ),
+    BridgesFromSources1 = [
+        B
+     || #{name := SourceBridgeName} = B <- BridgesFromSources0,
+        B =/= not_bridge_v1_compatible_error(),
+        %% Action is only shown in case of name conflict
+        not maps:is_key(SourceBridgeName, FromActionsNames)
+    ],
+    BridgesFromActions1 ++ BridgesFromSources1.
 
 bridge_v1_lookup_and_transform(ActionType, Name) ->
-    case lookup(ActionType, Name) of
-        {ok, #{raw_config := #{<<"connector">> := ConnectorName} = RawConfig} = ActionConfig} ->
+    case lookup_actions_or_sources(ActionType, Name) of
+        {ok, ConfRootName,
+            #{raw_config := #{<<"connector">> := ConnectorName} = RawConfig} = ActionConfig} ->
             BridgeV1Type = ?MODULE:bridge_v2_type_to_bridge_v1_type(ActionType, RawConfig),
             case ?MODULE:bridge_v1_is_valid(BridgeV1Type, Name) of
                 true ->
@@ -1155,6 +1189,7 @@ bridge_v1_lookup_and_transform(ActionType, Name) ->
                     case emqx_connector:lookup(ConnectorType, ConnectorName) of
                         {ok, Connector} ->
                             bridge_v1_lookup_and_transform_helper(
+                                ConfRootName,
                                 BridgeV1Type,
                                 Name,
                                 ActionType,
@@ -1172,11 +1207,26 @@ bridge_v1_lookup_and_transform(ActionType, Name) ->
             Error
     end.
 
+lookup_actions_or_sources(ActionType, Name) ->
+    case lookup(?ROOT_KEY_ACTIONS, ActionType, Name) of
+        {error, not_found} ->
+            case lookup(?ROOT_KEY_SOURCES, ActionType, Name) of
+                {ok, SourceInfo} ->
+                    {ok, ?ROOT_KEY_SOURCES, SourceInfo};
+                Error ->
+                    Error
+            end;
+        {ok, ActionInfo} ->
+            {ok, ?ROOT_KEY_ACTIONS, ActionInfo};
+        Error ->
+            Error
+    end.
+
 not_bridge_v1_compatible_error() ->
     {error, not_bridge_v1_compatible}.
 
 bridge_v1_lookup_and_transform_helper(
-    BridgeV1Type, BridgeName, ActionType, Action, ConnectorType, Connector
+    ConfRootName, BridgeV1Type, BridgeName, ActionType, Action, ConnectorType, Connector
 ) ->
     ConnectorRawConfig1 = maps:get(raw_config, Connector),
     ConnectorRawConfig2 = fill_defaults(
@@ -1189,7 +1239,7 @@ bridge_v1_lookup_and_transform_helper(
     ActionRawConfig2 = fill_defaults(
         ActionType,
         ActionRawConfig1,
-        <<"actions">>,
+        bin(ConfRootName),
         emqx_bridge_v2_schema
     ),
     BridgeV1ConfigFinal =
@@ -1210,6 +1260,7 @@ bridge_v1_lookup_and_transform_helper(
         end,
     BridgeV1Tmp = maps:put(raw_config, BridgeV1ConfigFinal, Action),
     BridgeV1 = maps:remove(status, BridgeV1Tmp),
+    x:show(what_the_fuck_action, Action),
     BridgeV2Status = maps:get(status, Action, undefined),
     BridgeV2Error = maps:get(error, Action, undefined),
     ResourceData1 = maps:get(resource_data, BridgeV1, #{}),
