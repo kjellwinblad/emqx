@@ -156,6 +156,8 @@ load() ->
     load_message_publish_hook(),
     ok = emqx_config_handler:add_handler(config_key_path_leaf(), emqx_bridge_v2),
     ok = emqx_config_handler:add_handler(config_key_path(), emqx_bridge_v2),
+    ok = emqx_config_handler:add_handler(config_key_path_leaf_sources(), emqx_bridge_v2),
+    ok = emqx_config_handler:add_handler(config_key_path_sources(), emqx_bridge_v2),
     ok.
 
 load_bridges(RootName) ->
@@ -173,19 +175,20 @@ load_bridges(RootName) ->
     ).
 
 unload() ->
-    unload_bridges(),
+    unload_bridges(?ROOT_KEY_ACTIONS),
+    unload_bridges(?ROOT_KEY_SOURCES),
     unload_message_publish_hook(),
     emqx_conf:remove_handler(config_key_path()),
     emqx_conf:remove_handler(config_key_path_leaf()),
     ok.
 
-unload_bridges() ->
-    Bridges = emqx:get_config([?ROOT_KEY_ACTIONS], #{}),
+unload_bridges(ConfRooKey) ->
+    Bridges = emqx:get_config([ConfRooKey], #{}),
     lists:foreach(
         fun({Type, Bridge}) ->
             lists:foreach(
                 fun({Name, BridgeConf}) ->
-                    uninstall_bridge_v2(Type, Name, BridgeConf)
+                    uninstall_bridge_v2(ConfRooKey, Type, Name, BridgeConf)
                 end,
                 maps:to_list(Bridge)
             )
@@ -262,15 +265,19 @@ list(ConfRootKey) ->
 -spec create(bridge_v2_type(), bridge_v2_name(), map()) ->
     {ok, emqx_config:update_result()} | {error, any()}.
 create(BridgeType, BridgeName, RawConf) ->
+    create(?ROOT_KEY_ACTIONS, BridgeType, BridgeName, RawConf).
+
+create(ConfRootKey, BridgeType, BridgeName, RawConf) ->
     ?SLOG(debug, #{
         brige_action => create,
         bridge_version => 2,
         bridge_type => BridgeType,
         bridge_name => BridgeName,
-        bridge_raw_config => emqx_utils:redact(RawConf)
+        bridge_raw_config => emqx_utils:redact(RawConf),
+        root_key_path => ConfRootKey
     }),
     emqx_conf:update(
-        config_key_path() ++ [BridgeType, BridgeName],
+        [ConfRootKey, BridgeType, BridgeName],
         RawConf,
         #{override_to => cluster}
     ).
@@ -280,6 +287,9 @@ create(BridgeType, BridgeName, RawConf) ->
 
 -spec remove(bridge_v2_type(), bridge_v2_name()) -> ok | {error, any()}.
 remove(BridgeType, BridgeName) ->
+    remove(?ROOT_KEY_ACTIONS, BridgeType, BridgeName).
+
+remove(ConfRootKey, BridgeType, BridgeName) ->
     ?SLOG(debug, #{
         brige_action => remove,
         bridge_version => 2,
@@ -288,7 +298,7 @@ remove(BridgeType, BridgeName) ->
     }),
     case
         emqx_conf:remove(
-            config_key_path() ++ [BridgeType, BridgeName],
+            [ConfRootKey, BridgeType, BridgeName],
             #{override_to => cluster}
         )
     of
@@ -444,6 +454,7 @@ source_hookpoint(BridgeId) ->
     <<"$sources/", (bin(BridgeId))/binary>>.
 
 uninstall_bridge_v2(
+    _ConfRootKey,
     _BridgeType,
     _BridgeName,
     #{enable := false}
@@ -451,11 +462,12 @@ uninstall_bridge_v2(
     %% Already not installed
     ok;
 uninstall_bridge_v2(
+    ConfRootKey,
     BridgeV2Type,
     BridgeName,
     #{connector := ConnectorName} = Config
 ) ->
-    BridgeV2Id = id(BridgeV2Type, BridgeName, ConnectorName),
+    BridgeV2Id = id_with_root_name(ConfRootKey, BridgeV2Type, BridgeName, ConnectorName),
     CreationOpts = emqx_resource:fetch_creation_opts(Config),
     ok = emqx_resource_buffer_worker_sup:stop_workers(BridgeV2Id, CreationOpts),
     ok = emqx_resource:clear_metrics(BridgeV2Id),
@@ -943,6 +955,12 @@ config_key_path() ->
 config_key_path_leaf() ->
     [?ROOT_KEY_ACTIONS, '?', '?'].
 
+config_key_path_sources() ->
+    [?ROOT_KEY_SOURCES].
+
+config_key_path_leaf_sources() ->
+    [?ROOT_KEY_SOURCES, '?', '?'].
+
 %% NOTE: We depend on the `emqx_bridge:pre_config_update/3` to restart/stop the
 %%       underlying resources.
 pre_config_update(_, {_Oper, _, _}, undefined) ->
@@ -961,7 +979,9 @@ operation_to_enable(enable) -> true.
 %%
 %% A public API that can trigger this is:
 %% bin/emqx ctl conf load data/configs/cluster.hocon
-post_config_update([?ROOT_KEY_ACTIONS], _Req, NewConf, OldConf, _AppEnv) ->
+post_config_update([ConfRootKey], _Req, NewConf, OldConf, _AppEnv) when
+    ConfRootKey =:= ?ROOT_KEY_ACTIONS; ConfRootKey =:= ?ROOT_KEY_SOURCES
+->
     #{added := Added, removed := Removed, changed := Updated} =
         diff_confs(NewConf, OldConf),
     %% new and updated bridges must have their connector references validated
@@ -983,11 +1003,15 @@ post_config_update([?ROOT_KEY_ACTIONS], _Req, NewConf, OldConf, _AppEnv) ->
     case multi_validate_referenced_connectors(ToValidate) of
         ok ->
             %% The config update will be failed if any task in `perform_bridge_changes` failed.
-            RemoveFun = fun uninstall_bridge_v2/3,
-            CreateFun = fun install_bridge_v2/4,
+            RemoveFun = fun(Type, Name, Conf) ->
+                uninstall_bridge_v2(ConfRootKey, Type, Name, Conf)
+            end,
+            CreateFun = fun(Type, Name, Conf) ->
+                install_bridge_v2(ConfRootKey, Type, Name, Conf)
+            end,
             UpdateFun = fun(Type, Name, {OldBridgeConf, Conf}) ->
-                uninstall_bridge_v2(Type, Name, OldBridgeConf),
-                install_bridge_v2(?ROOT_KEY_ACTIONS, Type, Name, Conf)
+                uninstall_bridge_v2(ConfRootKey, Type, Name, OldBridgeConf),
+                install_bridge_v2(ConfRootKey, Type, Name, Conf)
             end,
             Result = perform_bridge_changes([
                 #{action => RemoveFun, data => Removed},
@@ -1005,24 +1029,28 @@ post_config_update([?ROOT_KEY_ACTIONS], _Req, NewConf, OldConf, _AppEnv) ->
         {error, Error} ->
             {error, Error}
     end;
-post_config_update([?ROOT_KEY_ACTIONS, BridgeType, BridgeName], '$remove', _, _OldConf, _AppEnvs) ->
-    Conf = emqx:get_config([?ROOT_KEY_ACTIONS, BridgeType, BridgeName]),
-    ok = uninstall_bridge_v2(BridgeType, BridgeName, Conf),
+post_config_update([ConfRootKey, BridgeType, BridgeName], '$remove', _, _OldConf, _AppEnvs) when
+    ConfRootKey =:= ?ROOT_KEY_ACTIONS; ConfRootKey =:= ?ROOT_KEY_SOURCES
+->
+    Conf = emqx:get_config([ConfRootKey, BridgeType, BridgeName]),
+    ok = uninstall_bridge_v2(ConfRootKey, BridgeType, BridgeName, Conf),
     Bridges = emqx_utils_maps:deep_remove(
-        [BridgeType, BridgeName], emqx:get_config([?ROOT_KEY_ACTIONS])
+        [BridgeType, BridgeName], emqx:get_config([ConfRootKey])
     ),
     reload_message_publish_hook(Bridges),
     ?tp(bridge_post_config_update_done, #{}),
     ok;
-post_config_update([?ROOT_KEY_ACTIONS, BridgeType, BridgeName], _Req, NewConf, undefined, _AppEnvs) ->
+post_config_update([ConfRootKey, BridgeType, BridgeName], _Req, NewConf, undefined, _AppEnvs) when
+    ConfRootKey =:= ?ROOT_KEY_ACTIONS; ConfRootKey =:= ?ROOT_KEY_SOURCES
+->
     %% N.B.: all bridges must use the same field name (`connector`) to define the
     %% connector name.
     ConnectorName = maps:get(connector, NewConf),
     case validate_referenced_connectors(BridgeType, ConnectorName, BridgeName) of
         ok ->
-            ok = install_bridge_v2(?ROOT_KEY_ACTIONS, BridgeType, BridgeName, NewConf),
+            ok = install_bridge_v2(ConfRootKey, BridgeType, BridgeName, NewConf),
             Bridges = emqx_utils_maps:deep_put(
-                [BridgeType, BridgeName], emqx:get_config([?ROOT_KEY_ACTIONS]), NewConf
+                [BridgeType, BridgeName], emqx:get_config([ConfRootKey]), NewConf
             ),
             reload_message_publish_hook(Bridges),
             ?tp(bridge_post_config_update_done, #{}),
@@ -1030,14 +1058,16 @@ post_config_update([?ROOT_KEY_ACTIONS, BridgeType, BridgeName], _Req, NewConf, u
         {error, Error} ->
             {error, Error}
     end;
-post_config_update([?ROOT_KEY_ACTIONS, BridgeType, BridgeName], _Req, NewConf, OldConf, _AppEnvs) ->
+post_config_update([ConfRootKey, BridgeType, BridgeName], _Req, NewConf, OldConf, _AppEnvs) when
+    ConfRootKey =:= ?ROOT_KEY_ACTIONS; ConfRootKey =:= ?ROOT_KEY_SOURCES
+->
     ConnectorName = maps:get(connector, NewConf),
     case validate_referenced_connectors(BridgeType, ConnectorName, BridgeName) of
         ok ->
-            ok = uninstall_bridge_v2(BridgeType, BridgeName, OldConf),
-            ok = install_bridge_v2(?ROOT_KEY_ACTIONS, BridgeType, BridgeName, NewConf),
+            ok = uninstall_bridge_v2(ConfRootKey, BridgeType, BridgeName, OldConf),
+            ok = install_bridge_v2(ConfRootKey, BridgeType, BridgeName, NewConf),
             Bridges = emqx_utils_maps:deep_put(
-                [BridgeType, BridgeName], emqx:get_config([?ROOT_KEY_ACTIONS]), NewConf
+                [BridgeType, BridgeName], emqx:get_config([ConfRootKey]), NewConf
             ),
             reload_message_publish_hook(Bridges),
             ?tp(bridge_post_config_update_done, #{}),
@@ -1260,7 +1290,6 @@ bridge_v1_lookup_and_transform_helper(
         end,
     BridgeV1Tmp = maps:put(raw_config, BridgeV1ConfigFinal, Action),
     BridgeV1 = maps:remove(status, BridgeV1Tmp),
-    x:show(what_the_fuck_action, Action),
     BridgeV2Status = maps:get(status, Action, undefined),
     BridgeV2Error = maps:get(error, Action, undefined),
     ResourceData1 = maps:get(resource_data, BridgeV1, #{}),
@@ -1288,6 +1317,48 @@ bridge_v1_lookup_and_transform_helper(
 lookup_conf(Type, Name) ->
     lookup_conf(?ROOT_KEY_ACTIONS, Type, Name).
 
+lookup_conf_if_one_of_sources_actions(Type, Name) ->
+    LookUpConfActions = lookup_conf(?ROOT_KEY_ACTIONS, Type, Name),
+    LookUpConfSources = lookup_conf(?ROOT_KEY_SOURCES, Type, Name),
+    case {LookUpConfActions, LookUpConfSources} of
+        {{error, bridge_not_found}, {error, bridge_not_found}} ->
+            {error, bridge_not_found};
+        {{error, bridge_not_found}, Conf} ->
+            Conf;
+        {Conf, {error, bridge_not_found}} ->
+            Conf;
+        {_Conf1, _Conf2} ->
+            {error, name_conflict_sources_actions}
+    end.
+
+is_only_source(BridgeType, BridgeName) ->
+    LookUpConfActions = lookup_conf(?ROOT_KEY_ACTIONS, BridgeType, BridgeName),
+    LookUpConfSources = lookup_conf(?ROOT_KEY_SOURCES, BridgeType, BridgeName),
+    case {LookUpConfActions, LookUpConfSources} of
+        {{error, bridge_not_found}, {error, bridge_not_found}} ->
+            false;
+        {{error, bridge_not_found}, _Conf} ->
+            true;
+        {_Conf, {error, bridge_not_found}} ->
+            false;
+        {_Conf1, _Conf2} ->
+            false
+    end.
+
+get_conf_root_key_if_only_one(BridgeType, BridgeName) ->
+    LookUpConfActions = lookup_conf(?ROOT_KEY_ACTIONS, BridgeType, BridgeName),
+    LookUpConfSources = lookup_conf(?ROOT_KEY_SOURCES, BridgeType, BridgeName),
+    case {LookUpConfActions, LookUpConfSources} of
+        {{error, bridge_not_found}, {error, bridge_not_found}} ->
+            error({action_or_soruces_not_found, BridgeType, BridgeName});
+        {{error, bridge_not_found}, _Conf} ->
+            ?ROOT_KEY_SOURCES;
+        {_Conf, {error, bridge_not_found}} ->
+            ?ROOT_KEY_ACTIONS;
+        {_Conf1, _Conf2} ->
+            error({name_clash_action_soruces, BridgeType, BridgeName})
+    end.
+
 lookup_conf(RootName, Type, Name) ->
     case emqx:get_config([RootName, Type, Name], not_found) of
         not_found ->
@@ -1299,7 +1370,7 @@ lookup_conf(RootName, Type, Name) ->
 bridge_v1_split_config_and_create(BridgeV1Type, BridgeName, RawConf) ->
     BridgeV2Type = ?MODULE:bridge_v1_type_to_bridge_v2_type(BridgeV1Type),
     %% Check if the bridge v2 exists
-    case lookup_conf(BridgeV2Type, BridgeName) of
+    case lookup_conf_if_one_of_sources_actions(BridgeV2Type, BridgeName) of
         {error, _} ->
             %% If the bridge v2 does not exist, it is a valid bridge v1
             PreviousRawConf = undefined,
@@ -1311,8 +1382,9 @@ bridge_v1_split_config_and_create(BridgeV1Type, BridgeName, RawConf) ->
                 true ->
                     %% Using remove + create as update, hence do not delete deps.
                     RemoveDeps = [],
+                    ConfRootKey = get_conf_root_key_if_only_one(BridgeV2Type, BridgeName),
                     PreviousRawConf = emqx:get_raw_config(
-                        [?ROOT_KEY_ACTIONS, BridgeV2Type, BridgeName], undefined
+                        [ConfRootKey, BridgeV2Type, BridgeName], undefined
                     ),
                     %% To avoid losing configurations. We have to make sure that no crash occurs
                     %% during deletion and creation of configurations.
@@ -1338,7 +1410,8 @@ split_bridge_v1_config_and_create_helper(
             connector_conf := NewConnectorRawConf,
             bridge_v2_type := BridgeType,
             bridge_v2_name := BridgeName,
-            bridge_v2_conf := NewBridgeV2RawConf
+            bridge_v2_conf := NewBridgeV2RawConf,
+            conf_root_key := ConfRootName
         } = split_and_validate_bridge_v1_config(
             BridgeV1Type,
             BridgeName,
@@ -1349,6 +1422,7 @@ split_bridge_v1_config_and_create_helper(
         _ = PreCreateFun(),
 
         do_connector_and_bridge_create(
+            ConfRootName,
             ConnectorType,
             NewConnectorName,
             NewConnectorRawConf,
@@ -1363,6 +1437,7 @@ split_bridge_v1_config_and_create_helper(
     end.
 
 do_connector_and_bridge_create(
+    ConfRootName,
     ConnectorType,
     NewConnectorName,
     NewConnectorRawConf,
@@ -1373,7 +1448,7 @@ do_connector_and_bridge_create(
 ) ->
     case emqx_connector:create(ConnectorType, NewConnectorName, NewConnectorRawConf) of
         {ok, _} ->
-            case create(BridgeType, BridgeName, NewBridgeV2RawConf) of
+            case create(ConfRootName, BridgeType, BridgeName, NewBridgeV2RawConf) of
                 {ok, _} = Result ->
                     Result;
                 {error, Reason1} ->
@@ -1410,10 +1485,15 @@ split_and_validate_bridge_v1_config(BridgeV1Type, BridgeName, RawConf, PreviousR
             }
         }
     },
+    ConfRootKeyPrevRawConf =
+        case PreviousRawConf =/= undefined of
+            true -> get_conf_root_key_if_only_one(BridgeV2Type, BridgeName);
+            false -> not_used
+        end,
     FakeGlobalConfig =
         emqx_utils_maps:put_if(
             FakeGlobalConfig0,
-            bin(?ROOT_KEY_ACTIONS),
+            bin(ConfRootKeyPrevRawConf),
             #{bin(BridgeV2Type) => #{bin(BridgeName) => PreviousRawConf}},
             PreviousRawConf =/= undefined
         ),
@@ -1422,10 +1502,11 @@ split_and_validate_bridge_v1_config(BridgeV1Type, BridgeName, RawConf, PreviousR
     Output = emqx_connector_schema:transform_bridges_v1_to_connectors_and_bridges_v2(
         FakeGlobalConfig
     ),
+    ConfRootKey = get_conf_root_key(Output),
     NewBridgeV2RawConf =
         emqx_utils_maps:deep_get(
             [
-                bin(?ROOT_KEY_ACTIONS),
+                ConfRootKey,
                 bin(BridgeV2Type),
                 bin(BridgeName)
             ],
@@ -1433,7 +1514,7 @@ split_and_validate_bridge_v1_config(BridgeV1Type, BridgeName, RawConf, PreviousR
         ),
     ConnectorName = emqx_utils_maps:deep_get(
         [
-            bin(?ROOT_KEY_ACTIONS),
+            ConfRootKey,
             bin(BridgeV2Type),
             bin(BridgeName),
             <<"connector">>
@@ -1456,7 +1537,7 @@ split_and_validate_bridge_v1_config(BridgeV1Type, BridgeName, RawConf, PreviousR
                 bin(ConnectorName) => NewConnectorRawConf
             }
         },
-        <<"actions">> => #{
+        ConfRootKey => #{
             bin(BridgeV2Type) => #{
                 bin(BridgeName) => NewBridgeV2RawConf
             }
@@ -1476,13 +1557,19 @@ split_and_validate_bridge_v1_config(BridgeV1Type, BridgeName, RawConf, PreviousR
                 connector_conf => NewConnectorRawConf,
                 bridge_v2_type => BridgeV2Type,
                 bridge_v2_name => BridgeName,
-                bridge_v2_conf => NewBridgeV2RawConf
+                bridge_v2_conf => NewBridgeV2RawConf,
+                conf_root_key => ConfRootKey
             }
     catch
         %% validation errors
         throw:Reason1 ->
             {error, Reason1}
     end.
+
+get_conf_root_key(#{<<"actions">> := _}) ->
+    <<"actions">>;
+get_conf_root_key(#{<<"sources">> := _}) ->
+    <<"sources">>.
 
 bridge_v1_create_dry_run(BridgeType, RawConfig0) ->
     RawConf = maps:without([<<"name">>], RawConfig0),
@@ -1537,7 +1624,7 @@ bridge_v1_check_deps_and_remove(BridgeV1Type, BridgeName, RemoveDeps) ->
         BridgeV2Type,
         BridgeName,
         RemoveDeps,
-        lookup_conf(BridgeV2Type, BridgeName)
+        lookup_conf_if_one_of_sources_actions(BridgeV2Type, BridgeName)
     ).
 
 %% Bridge v1 delegated-removal in 3 steps:
@@ -1551,9 +1638,10 @@ bridge_v1_check_deps_and_remove(
     #{connector := ConnectorName}
 ) ->
     RemoveConnector = lists:member(connector, RemoveDeps),
-    case emqx_bridge_lib:maybe_withdraw_rule_action(BridgeType, BridgeName, RemoveDeps) of
+    case maybe_withdraw_rule_action(BridgeType, BridgeName, RemoveDeps) of
         ok ->
-            case remove(BridgeType, BridgeName) of
+            ConfRootKey = get_conf_root_key_if_only_one(BridgeType, BridgeName),
+            case remove(ConfRootKey, BridgeType, BridgeName) of
                 ok when RemoveConnector ->
                     maybe_delete_channels(BridgeType, BridgeName, ConnectorName);
                 ok ->
@@ -1567,6 +1655,14 @@ bridge_v1_check_deps_and_remove(
 bridge_v1_check_deps_and_remove(_BridgeType, _BridgeName, _RemoveDeps, Error) ->
     %% TODO: the connector is gone, for whatever reason, maybe call remove/2 anyway?
     Error.
+
+maybe_withdraw_rule_action(BridgeType, BridgeName, RemoveDeps) ->
+    case is_only_source(BridgeType, BridgeName) of
+        true ->
+            ok;
+        false ->
+            emqx_bridge_lib:maybe_withdraw_rule_action(BridgeType, BridgeName, RemoveDeps)
+    end.
 
 maybe_delete_channels(BridgeType, BridgeName, ConnectorName) ->
     case connector_has_channels(BridgeType, ConnectorName) of
