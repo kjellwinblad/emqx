@@ -214,11 +214,25 @@ start_mqtt_clients(ResourceId, StartConf, ClientOpts) ->
             {error, Reason}
     end.
 
-on_stop(ResourceId, _State) ->
+on_stop(ResourceId, State) ->
     ?SLOG(info, #{
         msg => "stopping_mqtt_connector",
         connector => ResourceId
     }),
+    %% on_stop can be called with State = undefined
+    StateMap =
+        case State of
+            Map when is_map(State) ->
+                Map;
+            _ ->
+                #{}
+        end,
+    case maps:get(topic_to_handler_index, StateMap, undefined) of
+        undefined ->
+            ok;
+        TopicToHandlerIndex ->
+            emqx_topic_index:delete(TopicToHandlerIndex)
+    end,
     Allocated = emqx_resource:get_allocated_resources(ResourceId),
     ok = stop_helper(Allocated).
 
