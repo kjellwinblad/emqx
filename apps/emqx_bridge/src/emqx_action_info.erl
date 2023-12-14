@@ -220,6 +220,7 @@ has_custom_bridge_v1_config_to_action_config(ActionOrBridgeType) ->
     erlang:function_exported(Module, bridge_v1_config_to_action_config, 2).
 
 bridge_v1_config_to_action_config(ActionOrBridgeType, BridgeV1Config, ConnectorName) ->
+    x:show(to_action_conf, BridgeV1Config),
     Module = get_action_info_module(ActionOrBridgeType),
     %% should only be called if defined
     Module:bridge_v1_config_to_action_config(BridgeV1Config, ConnectorName).

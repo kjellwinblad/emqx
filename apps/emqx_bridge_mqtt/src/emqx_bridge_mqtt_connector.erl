@@ -51,6 +51,8 @@
     %% see `emqtt:option()`
     | {client_opts, map()}.
 
+-include_lib("snabbkaffe/include/snabbkaffe.hrl").
+
 -define(HEALTH_CHECK_TIMEOUT, 1000).
 
 %% ===================================================================
@@ -76,6 +78,7 @@ on_start(ResourceId, #{server := Server} = Conf) ->
         connector => ResourceId,
         config => emqx_utils:redact(Conf)
     }),
+    x:show(start_connector),
     TopicToHandlerIndex = emqx_topic_index:new(),
     StartConf = Conf#{topic_to_handler_index => TopicToHandlerIndex},
     case start_mqtt_clients(ResourceId, StartConf) of
@@ -99,10 +102,18 @@ on_add_channel(
     ChannelId,
     #{config_root := actions} = ChannelConfig
 ) ->
+    x:show(on_add_channel, ChannelConfig),
     %% Publisher channel
     %% make a warning if clean_start is set to false
     case CleanStart of
         false ->
+            ?tp(
+                mqtt_clean_start_egress_action_warning,
+                #{
+                    channel_id => ChannelId,
+                    resource_id => _InstId
+                }
+            ),
             ?SLOG(warning, #{
                 msg => "mqtt_publisher_clean_start_false",
                 reason => "clean_start is set to false when using MQTT publisher action, " ++
@@ -131,6 +142,8 @@ on_add_channel(
     ChannelId,
     #{hookpoints := HookPoints} = ChannelConfig
 ) ->
+    x:show(on_add_ingress_channel),
+
     %% Add ingress channel
     ChannelState0 = maps:get(parameters, ChannelConfig),
     ChannelState1 = ChannelState0#{

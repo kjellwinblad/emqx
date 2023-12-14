@@ -56,13 +56,16 @@
 
 -export([
     disable_enable/3,
+    disable_enable/4,
     health_check/2,
     send_message/4,
     query/4,
     start/2,
     reset_metrics/2,
+    reset_metrics/3,
     create_dry_run/2,
-    get_metrics/2
+    get_metrics/2,
+    get_metrics/3
 ]).
 
 %% On message publish hook (for local_topics)
@@ -122,7 +125,8 @@
     bridge_v1_stop/2,
     bridge_v1_start/2,
     %% For test cases only
-    bridge_v1_remove/2
+    bridge_v1_remove/2,
+    get_conf_root_key_if_only_one/2
 ]).
 
 %%====================================================================
@@ -369,6 +373,7 @@ install_bridge_v2(
     BridgeName,
     Config
 ) ->
+    x:show(install_bridge_v2, {RootName, BridgeV2Type, BridgeName, Config}),
     install_bridge_v2_helper(
         RootName,
         BridgeV2Type,
@@ -420,7 +425,7 @@ install_bridge_v2_helper(
         ConnectorId,
         BridgeV2Id,
         augment_channel_config(
-            ?ROOT_KEY_ACTIONS,
+            RootName,
             BridgeV2Type,
             BridgeName,
             Config
@@ -513,11 +518,14 @@ combine_connector_and_bridge_v2_config(
 
 -spec disable_enable(disable | enable, bridge_v2_type(), bridge_v2_name()) ->
     {ok, any()} | {error, any()}.
-disable_enable(Action, BridgeType, BridgeName) when
+disable_enable(Action, BridgeType, BridgeName) ->
+    disable_enable(?ROOT_KEY_ACTIONS, Action, BridgeType, BridgeName).
+
+disable_enable(ConfRooKey, Action, BridgeType, BridgeName) when
     Action =:= disable; Action =:= enable
 ->
     emqx_conf:update(
-        config_key_path() ++ [BridgeType, BridgeName],
+        [ConfRooKey, BridgeType, BridgeName],
         {Action, BridgeType, BridgeName},
         #{override_to => cluster}
     ).
@@ -533,10 +541,12 @@ start(BridgeV2Type, Name) ->
     ConnectorOpFun = fun(ConnectorType, ConnectorName) ->
         emqx_connector_resource:start(ConnectorType, ConnectorName)
     end,
-    connector_operation_helper(BridgeV2Type, Name, ConnectorOpFun, true).
+    ConfRootKey = ?ROOT_KEY_ACTIONS,
+    connector_operation_helper(ConfRootKey, BridgeV2Type, Name, ConnectorOpFun, true).
 
-connector_operation_helper(BridgeV2Type, Name, ConnectorOpFun, DoHealthCheck) ->
+connector_operation_helper(ConfRootKey, BridgeV2Type, Name, ConnectorOpFun, DoHealthCheck) ->
     connector_operation_helper_with_conf(
+        ConfRootKey,
         BridgeV2Type,
         Name,
         lookup_conf(BridgeV2Type, Name),
@@ -545,14 +555,16 @@ connector_operation_helper(BridgeV2Type, Name, ConnectorOpFun, DoHealthCheck) ->
     ).
 
 connector_operation_helper_with_conf(
+    _ConfRootKey,
     _BridgeV2Type,
     _Name,
-    {error, bridge_not_found} = Error,
+    {error, _} = Error,
     _ConnectorOpFun,
     _DoHealthCheck
 ) ->
     Error;
 connector_operation_helper_with_conf(
+    _ConfRootKey,
     _BridgeV2Type,
     _Name,
     #{enable := false},
@@ -561,6 +573,7 @@ connector_operation_helper_with_conf(
 ) ->
     ok;
 connector_operation_helper_with_conf(
+    ConfRootKey,
     BridgeV2Type,
     Name,
     #{connector := ConnectorName},
@@ -575,7 +588,7 @@ connector_operation_helper_with_conf(
         {true, {error, Reason}} ->
             {error, Reason};
         {true, ok} ->
-            case health_check(BridgeV2Type, Name) of
+            case health_check(ConfRootKey, BridgeV2Type, Name) of
                 #{status := connected} ->
                     ok;
                 {error, Reason} ->
@@ -592,14 +605,17 @@ connector_operation_helper_with_conf(
 
 -spec reset_metrics(bridge_v2_type(), bridge_v2_name()) -> ok | {error, not_found}.
 reset_metrics(Type, Name) ->
-    reset_metrics_helper(Type, Name, lookup_conf(Type, Name)).
+    reset_metrics(?ROOT_KEY_ACTIONS, Type, Name).
 
-reset_metrics_helper(_Type, _Name, #{enable := false}) ->
+reset_metrics(ConfRootKey, Type, Name) ->
+    reset_metrics_helper(ConfRootKey, Type, Name, lookup_conf(ConfRootKey, Type, Name)).
+
+reset_metrics_helper(_ConfRootKey, _Type, _Name, #{enable := false}) ->
     ok;
-reset_metrics_helper(BridgeV2Type, BridgeName, #{connector := ConnectorName}) ->
-    BridgeV2Id = id(BridgeV2Type, BridgeName, ConnectorName),
+reset_metrics_helper(ConfRootKey, BridgeV2Type, BridgeName, #{connector := ConnectorName}) ->
+    BridgeV2Id = id_with_root_name(ConfRootKey, BridgeV2Type, BridgeName, ConnectorName),
     ok = emqx_metrics_worker:reset_metrics(?RES_METRICS, BridgeV2Id);
-reset_metrics_helper(_, _, _) ->
+reset_metrics_helper(_, _, _, _) ->
     {error, not_found}.
 
 get_query_mode(BridgeV2Type, Config) ->
@@ -655,7 +671,10 @@ send_message(BridgeType, BridgeName, Message, QueryOpts0) ->
 -spec health_check(BridgeType :: term(), BridgeName :: term()) ->
     #{status := emqx_resource:resource_status(), error := term()} | {error, Reason :: term()}.
 health_check(BridgeType, BridgeName) ->
-    case lookup_conf(BridgeType, BridgeName) of
+    health_check(?ROOT_KEY_ACTIONS, BridgeType, BridgeName).
+
+health_check(ConfRootKey, BridgeType, BridgeName) ->
+    case lookup_conf(ConfRootKey, BridgeType, BridgeName) of
         #{
             enable := true,
             connector := ConnectorName
@@ -664,7 +683,7 @@ health_check(BridgeType, BridgeName) ->
                 connector_type(BridgeType), ConnectorName
             ),
             emqx_resource_manager:channel_health_check(
-                ConnectorId, id(BridgeType, BridgeName, ConnectorName)
+                ConnectorId, id_with_root_name(ConfRootKey, BridgeType, BridgeName, ConnectorName)
             );
         #{enable := false} ->
             {error, bridge_stopped};
@@ -733,7 +752,10 @@ create_dry_run_helper(BridgeType, ConnectorRawConf, BridgeV2RawConf) ->
 
 -spec get_metrics(bridge_v2_type(), bridge_v2_name()) -> emqx_metrics_worker:metrics().
 get_metrics(Type, Name) ->
-    emqx_resource:get_metrics(id(Type, Name)).
+    get_metrics(?ROOT_KEY_ACTIONS, Type, Name).
+
+get_metrics(ConfRootKey, Type, Name) ->
+    emqx_resource:get_metrics(id_with_root_name(ConfRootKey, Type, Name)).
 
 %%====================================================================
 %% On message publish hook (for local topics)
@@ -1418,7 +1440,6 @@ split_bridge_v1_config_and_create_helper(
             RawConf,
             PreviousRawConf
         ),
-
         _ = PreCreateFun(),
 
         do_connector_and_bridge_create(
@@ -1471,6 +1492,7 @@ do_connector_and_bridge_create(
     end.
 
 split_and_validate_bridge_v1_config(BridgeV1Type, BridgeName, RawConf, PreviousRawConf) ->
+    x:show(xxxxxxxxxxxxxxxxxxxxxxxxx, RawConf),
     %% Create fake global config for the transformation and then call
     %% `emqx_connector_schema:transform_bridges_v1_to_connectors_and_bridges_v2/1'
     BridgeV2Type = ?MODULE:bridge_v1_type_to_bridge_v2_type(BridgeV1Type),
@@ -1502,6 +1524,7 @@ split_and_validate_bridge_v1_config(BridgeV1Type, BridgeName, RawConf, PreviousR
     Output = emqx_connector_schema:transform_bridges_v1_to_connectors_and_bridges_v2(
         FakeGlobalConfig
     ),
+    x:show(output_xxxxxxxxxxxxxx, Output),
     ConfRootKey = get_conf_root_key(Output),
     NewBridgeV2RawConf =
         emqx_utils_maps:deep_get(
@@ -1569,7 +1592,10 @@ split_and_validate_bridge_v1_config(BridgeV1Type, BridgeName, RawConf, PreviousR
 get_conf_root_key(#{<<"actions">> := _}) ->
     <<"actions">>;
 get_conf_root_key(#{<<"sources">> := _}) ->
-    <<"sources">>.
+    <<"sources">>;
+get_conf_root_key(NoMatch) ->
+    x:show(no_match, NoMatch),
+    erlang:halt().
 
 bridge_v1_create_dry_run(BridgeType, RawConfig0) ->
     RawConf = maps:without([<<"name">>], RawConfig0),
@@ -1596,7 +1622,7 @@ bridge_v1_remove(BridgeV1Type, BridgeName) ->
     bridge_v1_remove(
         ActionType,
         BridgeName,
-        lookup_conf(ActionType, BridgeName)
+        lookup_conf_if_one_of_sources_actions(ActionType, BridgeName)
     ).
 
 bridge_v1_remove(
@@ -1604,7 +1630,8 @@ bridge_v1_remove(
     Name,
     #{connector := ConnectorName}
 ) ->
-    case remove(ActionType, Name) of
+    ConfRootKey = get_conf_root_key_if_only_one(ActionType, Name),
+    case remove(ConfRootKey, ActionType, Name) of
         ok ->
             ConnectorType = connector_type(ActionType),
             emqx_connector:remove(ConnectorType, ConnectorName);
@@ -1716,23 +1743,25 @@ bridge_v1_enable_disable(Action, BridgeType, BridgeName) ->
                 Action,
                 BridgeType,
                 BridgeName,
-                lookup_conf(BridgeType, BridgeName)
+                lookup_conf_if_one_of_sources_actions(BridgeType, BridgeName)
             );
         false ->
             {error, not_bridge_v1_compatible}
     end.
 
-bridge_v1_enable_disable_helper(_Op, _BridgeType, _BridgeName, {error, bridge_not_found}) ->
-    {error, bridge_not_found};
+bridge_v1_enable_disable_helper(_Op, _BridgeType, _BridgeName, {error, Reason}) ->
+    {error, Reason};
 bridge_v1_enable_disable_helper(enable, BridgeType, BridgeName, #{connector := ConnectorName}) ->
     BridgeV2Type = ?MODULE:bridge_v1_type_to_bridge_v2_type(BridgeType),
     ConnectorType = connector_type(BridgeV2Type),
     {ok, _} = emqx_connector:disable_enable(enable, ConnectorType, ConnectorName),
-    emqx_bridge_v2:disable_enable(enable, BridgeV2Type, BridgeName);
+    ConfRootKey = get_conf_root_key_if_only_one(BridgeType, BridgeName),
+    emqx_bridge_v2:disable_enable(ConfRootKey, enable, BridgeV2Type, BridgeName);
 bridge_v1_enable_disable_helper(disable, BridgeType, BridgeName, #{connector := ConnectorName}) ->
     BridgeV2Type = emqx_bridge_v2:bridge_v1_type_to_bridge_v2_type(BridgeType),
     ConnectorType = connector_type(BridgeV2Type),
-    {ok, _} = emqx_bridge_v2:disable_enable(disable, BridgeV2Type, BridgeName),
+    ConfRootKey = get_conf_root_key_if_only_one(BridgeType, BridgeName),
+    {ok, _} = emqx_bridge_v2:disable_enable(ConfRootKey, disable, BridgeV2Type, BridgeName),
     emqx_connector:disable_enable(disable, ConnectorType, ConnectorName).
 
 bridge_v1_restart(BridgeV1Type, Name) ->
@@ -1757,10 +1786,12 @@ bridge_v1_operation_helper(BridgeV1Type, Name, ConnectorOpFun, DoHealthCheck) ->
     BridgeV2Type = ?MODULE:bridge_v1_type_to_bridge_v2_type(BridgeV1Type),
     case emqx_bridge_v2:bridge_v1_is_valid(BridgeV1Type, Name) of
         true ->
+            ConfRootKey = get_conf_root_key_if_only_one(BridgeV2Type, Name),
             connector_operation_helper_with_conf(
+                ConfRootKey,
                 BridgeV2Type,
                 Name,
-                lookup_conf(BridgeV2Type, Name),
+                lookup_conf_if_one_of_sources_actions(BridgeV2Type, Name),
                 ConnectorOpFun,
                 DoHealthCheck
             );

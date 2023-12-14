@@ -55,7 +55,8 @@ fields("mqtt_publisher_action") ->
 fields(action_parameters) ->
     Fields0 = emqx_bridge_mqtt_connector_schema:fields("egress"),
     Fields1 = proplists:delete(pool_size, Fields0),
-    Fields1;
+    Fields2 = proplists:delete(local, Fields1),
+    Fields2;
 fields(source) ->
     {mqtt,
         mk(

@@ -83,7 +83,7 @@ bridge_v1_config_to_action_config(BridgeV1Config, ConnectorName) ->
 
 bridge_v1_config_to_action_config_helper(
     #{
-        <<"egress">> := EgressMap
+        <<"egress">> := EgressMap0
     } = Config,
     ConnectorName
 ) ->
@@ -93,9 +93,19 @@ bridge_v1_config_to_action_config_helper(
     ConfigMap1 = general_action_conf_map_from_bridge_v1_config(
         Config, ConnectorName, SchemaFields, ResourceOptsSchemaFields
     ),
+    LocalTopicMap = maps:get(<<"local">>, EgressMap0, #{}),
+    LocalTopic = maps:get(<<"topic">>, LocalTopicMap, undefined),
+    EgressMap1 = maps:remove(<<"local">>, EgressMap0),
     %% Add parameters field (Egress map) to the action config
-    ConfigMap2 = maps:put(<<"parameters">>, EgressMap, ConfigMap1),
-    {action, mqtt, ConfigMap2};
+    ConfigMap2 = maps:put(<<"parameters">>, EgressMap1, ConfigMap1),
+    ConfigMap3 =
+        case LocalTopic of
+            undefined ->
+                ConfigMap2;
+            _ ->
+                maps:put(<<"local_topic">>, LocalTopic, ConfigMap2)
+        end,
+    {action, mqtt, ConfigMap3};
 bridge_v1_config_to_action_config_helper(
     #{
         <<"ingress">> := IngressMap
@@ -108,8 +118,10 @@ bridge_v1_config_to_action_config_helper(
     ConfigMap1 = general_action_conf_map_from_bridge_v1_config(
         Config, ConnectorName, SchemaFields, ResourceOptsSchemaFields
     ),
+    DefaultPoolSize = emqx_connector_schema_lib:pool_size(default),
+    IngressMap1 = maps:remove(<<"pool_size">>, IngressMap),
     %% Add parameters field (Egress map) to the action config
-    ConfigMap2 = maps:put(<<"parameters">>, IngressMap, ConfigMap1),
+    ConfigMap2 = maps:put(<<"parameters">>, IngressMap1, ConfigMap1),
     {source, mqtt, ConfigMap2};
 bridge_v1_config_to_action_config_helper(
     _Config,
@@ -183,14 +195,24 @@ connector_action_config_to_bridge_v1_config(
                 <<"subscriber">>
         end,
     Parms2 = maps:remove(<<"direction">>, Params),
-    PoolSize = maps:get(<<"pool_size">>, ConnectorConfig, 1),
+    DefaultPoolSize = emqx_connector_schema_lib:pool_size(default),
+    PoolSize = maps:get(<<"pool_size">>, ConnectorConfig, DefaultPoolSize),
     Parms3 = maps:put(<<"pool_size">>, PoolSize, Parms2),
     ConnectorConfig2 = maps:remove(<<"pool_size">>, ConnectorConfig),
+    LocalTopic = maps:get(<<"local_topic">>, ActionConfig, undefined),
     BridgeV1Conf0 =
-        case Direction of
-            <<"publisher">> ->
+        case {Direction, LocalTopic} of
+            {<<"publisher">>, undefined} ->
                 #{<<"egress">> => Parms3};
-            <<"subscriber">> ->
+            {<<"publisher">>, LocalT} ->
+                #{
+                    <<"egress">> => Parms3,
+                    <<"local">> =>
+                        #{
+                            <<"topic">> => LocalT
+                        }
+                };
+            {<<"subscriber">>, _} ->
                 #{<<"ingress">> => Parms3}
         end,
     BridgeV1Conf1 = maps:merge(BridgeV1Conf0, ConnectorConfig2),
