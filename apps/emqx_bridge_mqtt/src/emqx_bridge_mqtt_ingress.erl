@@ -110,7 +110,7 @@ should_subscribe(RemoteTopic, WorkerIdx, PoolSize, Name, LogWarn) ->
 unsubscribe_channel(PoolName, ChannelConfig, ChannelId, TopicToHandlerIndex) ->
     Workers = ecpool:workers(PoolName),
     PoolSize = length(Workers),
-    [
+    _ = [
         unsubscribe_channel(Pid, Name, ChannelConfig, Idx, PoolSize, ChannelId, TopicToHandlerIndex)
      || {{Name, Idx}, Pid} <- Workers
     ],
@@ -247,6 +247,11 @@ handle_publish(
     Name,
     TopicToHandlerIndex
 ) ->
+    ?SLOG(debug, #{
+        msg => "ingress_publish_local",
+        message => MsgIn,
+        name => Name
+    }),
     Matches = emqx_topic_index:matches(Topic, TopicToHandlerIndex, []),
     lists:foreach(
         fun(Match) ->
@@ -254,12 +259,6 @@ handle_publish(
         end,
         Matches
     ),
-
-    ?SLOG(debug, #{
-        msg => "ingress_publish_local",
-        message => MsgIn,
-        name => Name
-    }),
     ok.
 
 handle_match(
@@ -275,7 +274,7 @@ handle_match(
 
     maybe_on_message_received(Msg, OnMessage),
     LocalPublish = maps:get(local, ChannelConfig, undefined),
-    maybe_publish_local(Msg, LocalPublish, Props),
+    _ = maybe_publish_local(Msg, LocalPublish, Props),
     ok.
 
 maybe_on_message_received(Msg, {Mod, Func, Args}) ->

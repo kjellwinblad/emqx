@@ -118,7 +118,6 @@ bridge_v1_config_to_action_config_helper(
     ConfigMap1 = general_action_conf_map_from_bridge_v1_config(
         Config, ConnectorName, SchemaFields, ResourceOptsSchemaFields
     ),
-    DefaultPoolSize = emqx_connector_schema_lib:pool_size(default),
     IngressMap1 = maps:remove(<<"pool_size">>, IngressMap),
     %% Add parameters field (Egress map) to the action config
     ConfigMap2 = maps:put(<<"parameters">>, IngressMap1, ConfigMap1),
@@ -127,7 +126,7 @@ bridge_v1_config_to_action_config_helper(
     _Config,
     _ConnectorName
 ) ->
-    none.
+    error({incompatible_bridge_v1, no_matching_action_or_source}).
 
 general_action_conf_map_from_bridge_v1_config(
     Config, ConnectorName, SchemaFields, ResourceOptsSchemaFields

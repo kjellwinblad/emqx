@@ -1268,9 +1268,7 @@ lookup_actions_or_sources(ActionType, Name) ->
                     Error
             end;
         {ok, ActionInfo} ->
-            {ok, ?ROOT_KEY_ACTIONS, ActionInfo};
-        Error ->
-            Error
+            {ok, ?ROOT_KEY_ACTIONS, ActionInfo}
     end.
 
 not_bridge_v1_compatible_error() ->
@@ -1590,7 +1588,7 @@ get_conf_root_key(#{<<"actions">> := _}) ->
     <<"actions">>;
 get_conf_root_key(#{<<"sources">> := _}) ->
     <<"sources">>;
-get_conf_root_key(NoMatch) ->
+get_conf_root_key(_NoMatch) ->
     error({incompatible_bridge_v1, no_action_or_source}).
 
 bridge_v1_create_dry_run(BridgeType, RawConfig0) ->
