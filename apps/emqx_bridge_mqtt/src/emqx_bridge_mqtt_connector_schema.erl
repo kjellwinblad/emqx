@@ -331,8 +331,7 @@ fields("post_connector") ->
 fields("put_connector") ->
     fields("config_connector");
 fields(What) ->
-    x:show(conn_miss, What),
-    erlang:halt().
+    error({emqx_bridge_mqtt_connector_schema, missing_field_handler, What}).
 
 ingress_pool_size(desc) ->
     ?DESC("ingress_pool_size");

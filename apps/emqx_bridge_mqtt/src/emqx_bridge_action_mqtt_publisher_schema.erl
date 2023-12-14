@@ -94,9 +94,8 @@ fields("post_bridge_v2") ->
     fields("mqtt_publisher_action");
 fields("put_bridge_v2") ->
     fields("mqtt_publisher_action");
-fields(_What) ->
-    x:show(missing_field_pub, _What),
-    erlang:halt().
+fields(What) ->
+    error({emqx_bridge_action_mqtt_publisher_schema, missing_field_handler, What}).
 %% v2: api schema
 %% The parameter equls to
 %%   `get_bridge_v2`, `post_bridge_v2`, `put_bridge_v2` from emqx_bridge_v2_schema:api_schema/1

@@ -189,7 +189,6 @@ fix_remote_config(#{remote := RC, local := LC}, BridgeName, TopicToHandlerIndex,
 insert_to_topic_to_handler_index(
     #{remote := #{topic := Topic}} = Conf, TopicToHandlerIndex, BridgeName
 ) ->
-    x:show(parse_result, emqx_topic:parse(Topic)),
     TopicPattern =
         case emqx_topic:parse(Topic) of
             {#share{group = _Group, topic = TP}, _} ->
@@ -197,8 +196,6 @@ insert_to_topic_to_handler_index(
             _ ->
                 Topic
         end,
-    x:show(topic_pattern, TopicPattern),
-
     emqx_topic_index:insert(TopicPattern, BridgeName, Conf, TopicToHandlerIndex).
 
 parse_remote(#{qos := QoSIn} = Remote, BridgeName) ->
@@ -250,8 +247,6 @@ handle_publish(
     Name,
     TopicToHandlerIndex
 ) ->
-    x:show(xxxxxxxxxxxx_handle_publish, MsgIn),
-    x:show(index, ets:tab2list(TopicToHandlerIndex)),
     Matches = emqx_topic_index:matches(Topic, TopicToHandlerIndex, []),
     lists:foreach(
         fun(Match) ->
@@ -275,7 +270,6 @@ handle_match(
     Props
 ) ->
     [ChannelConfig] = emqx_topic_index:get_record(Match, TopicToHandlerIndex),
-    x:show(handle_match, ChannelConfig),
     #{on_message_received := OnMessage} = ChannelConfig,
     Msg = import_msg(MsgIn, ChannelConfig),
 

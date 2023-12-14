@@ -78,7 +78,6 @@ on_start(ResourceId, #{server := Server} = Conf) ->
         connector => ResourceId,
         config => emqx_utils:redact(Conf)
     }),
-    x:show(start_connector),
     TopicToHandlerIndex = emqx_topic_index:new(),
     StartConf = Conf#{topic_to_handler_index => TopicToHandlerIndex},
     case start_mqtt_clients(ResourceId, StartConf) of
@@ -102,7 +101,6 @@ on_add_channel(
     ChannelId,
     #{config_root := actions} = ChannelConfig
 ) ->
-    x:show(on_add_channel, ChannelConfig),
     %% Publisher channel
     %% make a warning if clean_start is set to false
     case CleanStart of
@@ -142,8 +140,6 @@ on_add_channel(
     ChannelId,
     #{hookpoints := HookPoints} = ChannelConfig
 ) ->
-    x:show(on_add_ingress_channel),
-
     %% Add ingress channel
     ChannelState0 = maps:get(parameters, ChannelConfig),
     ChannelState1 = ChannelState0#{

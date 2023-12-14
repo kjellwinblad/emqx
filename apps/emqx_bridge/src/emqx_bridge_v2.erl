@@ -373,7 +373,6 @@ install_bridge_v2(
     BridgeName,
     Config
 ) ->
-    x:show(install_bridge_v2, {RootName, BridgeV2Type, BridgeName, Config}),
     install_bridge_v2_helper(
         RootName,
         BridgeV2Type,
@@ -1492,7 +1491,6 @@ do_connector_and_bridge_create(
     end.
 
 split_and_validate_bridge_v1_config(BridgeV1Type, BridgeName, RawConf, PreviousRawConf) ->
-    x:show(xxxxxxxxxxxxxxxxxxxxxxxxx, RawConf),
     %% Create fake global config for the transformation and then call
     %% `emqx_connector_schema:transform_bridges_v1_to_connectors_and_bridges_v2/1'
     BridgeV2Type = ?MODULE:bridge_v1_type_to_bridge_v2_type(BridgeV1Type),
@@ -1524,7 +1522,6 @@ split_and_validate_bridge_v1_config(BridgeV1Type, BridgeName, RawConf, PreviousR
     Output = emqx_connector_schema:transform_bridges_v1_to_connectors_and_bridges_v2(
         FakeGlobalConfig
     ),
-    x:show(output_xxxxxxxxxxxxxx, Output),
     ConfRootKey = get_conf_root_key(Output),
     NewBridgeV2RawConf =
         emqx_utils_maps:deep_get(
@@ -1594,8 +1591,7 @@ get_conf_root_key(#{<<"actions">> := _}) ->
 get_conf_root_key(#{<<"sources">> := _}) ->
     <<"sources">>;
 get_conf_root_key(NoMatch) ->
-    x:show(no_match, NoMatch),
-    erlang:halt().
+    error({incompatible_bridge_v1, no_action_or_source}).
 
 bridge_v1_create_dry_run(BridgeType, RawConfig0) ->
     RawConf = maps:without([<<"name">>], RawConfig0),
