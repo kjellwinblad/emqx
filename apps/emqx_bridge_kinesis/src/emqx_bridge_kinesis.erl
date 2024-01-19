@@ -15,7 +15,9 @@
 ]).
 
 -export([
-    conn_bridge_examples/1
+    bridge_v2_examples/1,
+    conn_bridge_examples/1,
+    connector_examples/1
 ]).
 
 %%-------------------------------------------------------------------------------------------------
@@ -28,6 +30,37 @@ namespace() ->
 roots() ->
     [].
 
+fields(Field) when
+    Field == "get_connector";
+    Field == "put_connector";
+    Field == "post_connector"
+->
+    emqx_connector_schema:api_fields(
+        Field,
+        kinesis,
+        connector_config_fields()
+    );
+fields(action) ->
+    {kinesis,
+        hoconsc:mk(
+            hoconsc:map(name, hoconsc:ref(?MODULE, kinesis_action)),
+            #{
+                desc => <<"Kinesis Action Config">>,
+                required => false
+            }
+        )};
+fields(action_parameters) ->
+    fields(producer);
+fields(kinesis_action) ->
+    emqx_bridge_v2_schema:make_producer_action_schema(
+        hoconsc:mk(
+            hoconsc:ref(?MODULE, action_parameters),
+            #{
+                required => true,
+                desc => ?DESC("action_parameters")
+            }
+        )
+    );
 fields("config_producer") ->
     emqx_bridge_schema:common_bridge_fields() ++
         fields("resource_opts") ++
@@ -134,7 +167,21 @@ fields("get_producer") ->
 fields("post_producer") ->
     [type_field_producer(), name_field() | fields("config_producer")];
 fields("put_producer") ->
-    fields("config_producer").
+    fields("config_producer");
+fields("config_connector") ->
+    connector_config_fields();
+fields("put_bridge_v2") ->
+    fields(kinesis_action);
+fields("get_bridge_v2") ->
+    fields(kinesis_action);
+fields("post_bridge_v2") ->
+    fields("post", kinesis, kinesis_action).
+
+fields("post", Type, StructName) ->
+    [type_field(Type), name_field() | fields(StructName)].
+
+type_field(Type) ->
+    {type, hoconsc:mk(hoconsc:enum([Type]), #{required => true, desc => ?DESC("desc_type")})}.
 
 desc("config_producer") ->
     ?DESC("desc_config");
@@ -152,6 +199,169 @@ conn_bridge_examples(Method) ->
             }
         }
     ].
+
+%% TODO Fix these examples
+
+connector_examples(Method) ->
+    [
+        #{
+            <<"kafka_producer">> => #{
+                summary => <<"Kafka Producer Connector">>,
+                value => values({Method, connector})
+            }
+        }
+    ].
+
+bridge_v2_examples(Method) ->
+    [
+        #{
+            <<"kafka_producer">> => #{
+                summary => <<"Kafka Producer Action">>,
+                value => values({Method, bridge_v2_producer})
+            }
+        }
+    ].
+
+values({get, connector}) ->
+    maps:merge(
+        #{
+            status => <<"connected">>,
+            node_status => [
+                #{
+                    node => <<"emqx@localhost">>,
+                    status => <<"connected">>
+                }
+            ],
+            actions => [<<"my_action">>]
+        },
+        values({post, connector})
+    );
+values({get, KafkaType}) ->
+    maps:merge(
+        #{
+            status => <<"connected">>,
+            node_status => [
+                #{
+                    node => <<"emqx@localhost">>,
+                    status => <<"connected">>
+                }
+            ]
+        },
+        values({post, KafkaType})
+    );
+values({post, connector}) ->
+    maps:merge(
+        #{
+            name => <<"my_kafka_producer_connector">>,
+            type => <<"kafka_producer">>
+        },
+        values(common_config)
+    );
+values({post, KafkaType}) ->
+    maps:merge(
+        #{
+            name => <<"my_kafka_producer_action">>,
+            type => <<"kafka_producer">>
+        },
+        values({put, KafkaType})
+    );
+values({put, bridge_v2_producer}) ->
+    values(bridge_v2_producer);
+values({put, connector}) ->
+    values(common_config);
+values({put, KafkaType}) ->
+    maps:merge(values(common_config), values(KafkaType));
+values(bridge_v2_producer) ->
+    #{
+        enable => true,
+        connector => <<"my_kafka_producer_connector">>,
+        parameters => values(producer_values),
+        local_topic => <<"mqtt/local/topic">>,
+        resource_opts => #{
+            health_check_interval => "32s"
+        }
+    };
+values(common_config) ->
+    #{
+        authentication => #{
+            mechanism => <<"plain">>,
+            username => <<"username">>,
+            password => <<"******">>
+        },
+        bootstrap_hosts => <<"localhost:9092">>,
+        connect_timeout => <<"5s">>,
+        enable => true,
+        metadata_request_timeout => <<"4s">>,
+        min_metadata_refresh_interval => <<"3s">>,
+        socket_opts => #{
+            sndbuf => <<"1024KB">>,
+            recbuf => <<"1024KB">>,
+            nodelay => true,
+            tcp_keepalive => <<"none">>
+        }
+    };
+values(producer) ->
+    #{
+        kafka => values(producer_values),
+        local_topic => <<"mqtt/local/topic">>
+    };
+values(producer_values) ->
+    #{
+        topic => <<"kafka-topic">>,
+        message => #{
+            key => <<"${.clientid}">>,
+            value => <<"${.}">>,
+            timestamp => <<"${.timestamp}">>
+        },
+        max_batch_bytes => <<"896KB">>,
+        compression => <<"no_compression">>,
+        partition_strategy => <<"random">>,
+        required_acks => <<"all_isr">>,
+        partition_count_refresh_interval => <<"60s">>,
+        kafka_headers => <<"${pub_props}">>,
+        kafka_ext_headers => [
+            #{
+                kafka_ext_header_key => <<"clientid">>,
+                kafka_ext_header_value => <<"${clientid}">>
+            },
+            #{
+                kafka_ext_header_key => <<"topic">>,
+                kafka_ext_header_value => <<"${topic}">>
+            }
+        ],
+        kafka_header_value_encode_mode => none,
+        max_inflight => 10,
+        buffer => #{
+            mode => <<"hybrid">>,
+            per_partition_limit => <<"2GB">>,
+            segment_bytes => <<"100MB">>,
+            memory_overload_protection => true
+        }
+    };
+values(consumer) ->
+    #{
+        kafka => #{
+            max_batch_bytes => <<"896KB">>,
+            offset_reset_policy => <<"latest">>,
+            offset_commit_interval_seconds => 5
+        },
+        key_encoding_mode => <<"none">>,
+        topic_mapping => [
+            #{
+                kafka_topic => <<"kafka-topic-1">>,
+                mqtt_topic => <<"mqtt/topic/${.offset}">>,
+                qos => 1,
+                payload_template => <<"${.}">>
+            },
+            #{
+                kafka_topic => <<"kafka-topic-2">>,
+                mqtt_topic => <<"mqtt/topic/2">>,
+                qos => 2,
+                payload_template => <<"v = ${.value}">>
+            }
+        ],
+        value_encoding_mode => <<"none">>
+    }.
 
 values(producer, _Method) ->
     #{
@@ -173,6 +383,10 @@ values(producer, _Method) ->
 %%-------------------------------------------------------------------------------------------------
 %% Helper fns
 %%-------------------------------------------------------------------------------------------------
+
+connector_config_fields() ->
+    emqx_connector_schema:common_fields() ++
+        fields(connector_config).
 
 sc(Type, Meta) -> hoconsc:mk(Type, Meta).
 

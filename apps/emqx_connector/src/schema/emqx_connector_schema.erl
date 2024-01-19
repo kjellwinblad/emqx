@@ -131,6 +131,8 @@ connector_type_to_bridge_types(gcp_pubsub_producer) ->
     [gcp_pubsub, gcp_pubsub_producer];
 connector_type_to_bridge_types(kafka_producer) ->
     [kafka, kafka_producer];
+connector_type_to_bridge_types(kinesis) ->
+    [kinesis, kinesis_producer];
 connector_type_to_bridge_types(matrix) ->
     [matrix];
 connector_type_to_bridge_types(mongodb) ->
@@ -430,6 +432,7 @@ transform_bridges_v1_to_connectors_and_bridges_v2(RawConfig) ->
         RawConfig,
         ConnectorFields
     ),
+    % x:show(new_raw_conf, NewRawConf),
     NewRawConf.
 
 %%======================================================================================
