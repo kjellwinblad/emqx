@@ -24,13 +24,9 @@
     instance_id => resource_id(),
     any() => term()
 }.
--type templates() :: #{
-    partition_key := list(),
-    send_message := list()
-}.
 -type state() :: #{
     pool_name := resource_id(),
-    templates := templates()
+    installed_channels := map()
 }.
 -export_type([config_connector/0]).
 
@@ -208,14 +204,14 @@ on_get_channels(ResId) ->
 
 -spec on_query(
     resource_id(),
-    {send_message, map()},
+    {channel_id(), map()},
     state()
 ) ->
     {ok, map()}
     | {error, {recoverable_error, term()}}
     | {error, term()}.
 on_query(ResourceId, {ChannelId, Message}, State) ->
-    Requests = [{send_message, Message}],
+    Requests = [{ChannelId, Message}],
     ?tp(emqx_bridge_kinesis_impl_producer_sync_query, #{message => Message}),
     do_send_requests_sync(ResourceId, Requests, State, ChannelId).
 
@@ -242,7 +238,7 @@ connect(Opts) ->
 
 -spec do_send_requests_sync(
     resource_id(),
-    [{send_message, map()}],
+    [{channel_id(), map()}],
     state(),
     channel_id()
 ) ->

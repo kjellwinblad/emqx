@@ -85,7 +85,8 @@ start_link(Options) ->
 %%%===================================================================
 
 %% Initialize kinesis connector
--spec init(emqx_bridge_kinesis_impl_producer:config()) -> {ok, state()}.
+-spec init(emqx_bridge_kinesis_impl_producer:config_connector()) ->
+    {ok, state()} | {stop, Reason :: term()}.
 init(#{
     aws_access_key_id := AwsAccessKey,
     aws_secret_access_key := AwsSecretAccessKey,
