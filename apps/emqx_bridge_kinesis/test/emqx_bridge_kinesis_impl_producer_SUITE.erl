@@ -131,7 +131,7 @@ generate_config(Config0) ->
     ].
 
 connector_resource_id(BridgeType, Name) ->
-    <<"connector:", BridgeType/binary, ":connector_", Name/binary>>.
+    <<"connector:", BridgeType/binary, ":", Name/binary>>.
 
 kinesis_config(Config) ->
     QueryMode = proplists:get_value(query_mode, Config, async),
