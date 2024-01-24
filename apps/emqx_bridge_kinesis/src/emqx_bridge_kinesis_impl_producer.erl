@@ -17,8 +17,6 @@
     aws_access_key_id := binary(),
     aws_secret_access_key := emqx_secret:t(binary()),
     endpoint := binary(),
-    partition_key := binary(),
-    payload_template := binary(),
     max_retries := non_neg_integer(),
     pool_size := non_neg_integer(),
     instance_id => resource_id(),
@@ -71,7 +69,6 @@ on_start(
         {config, Config},
         {pool_size, PoolSize}
     ],
-    % Templates = parse_template(Config),
     State = #{
         pool_name => InstanceId,
         installed_channels => #{}

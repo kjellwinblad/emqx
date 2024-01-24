@@ -11,9 +11,7 @@
 -behaviour(gen_server).
 
 -type state() :: #{
-    instance_id := resource_id(),
-    partition_key := binary(),
-    stream_name := binary()
+    instance_id := resource_id()
 }.
 -type record() :: {Data :: binary(), PartitionKey :: binary()}.
 
@@ -24,7 +22,6 @@
     start_link/1,
     connection_status/1,
     connection_status/2,
-    query/2,
     query/3
 ]).
 
@@ -65,9 +62,6 @@ connection_status(Pid, StreamName) ->
         _:_ ->
             {error, timeout}
     end.
-
-query(Pid, Records) ->
-    gen_server:call(Pid, {query, Records}, infinity).
 
 query(Pid, Records, StreamName) ->
     gen_server:call(Pid, {query, Records, StreamName}, infinity).
@@ -134,9 +128,6 @@ init(#{
             {stop, Reason}
     end.
 
-handle_call(connection_status, _From, #{stream_name := StreamName} = State) ->
-    Status = get_status(StreamName),
-    {reply, Status, State};
 handle_call({connection_status, StreamName}, _From, State) ->
     Status = get_status(StreamName),
     {reply, Status, State};
@@ -149,9 +140,6 @@ handle_call(connection_status, _From, State) ->
                 {error, Error}
         end,
     {reply, Status, State};
-handle_call({query, Records}, _From, #{stream_name := StreamName} = State) ->
-    Result = do_query(StreamName, Records),
-    {reply, Result, State};
 handle_call({query, Records, StreamName}, _From, State) ->
     Result = do_query(StreamName, Records),
     {reply, Result, State};

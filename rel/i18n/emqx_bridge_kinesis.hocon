@@ -99,6 +99,6 @@ config_connector.desc:
 """Configuration for a Kinesis Client."""
 
 config_connector.label:
-"""GCP PubSub Producer Client Configuration"""
+"""Kinesis Client Configuration"""
 
 }
