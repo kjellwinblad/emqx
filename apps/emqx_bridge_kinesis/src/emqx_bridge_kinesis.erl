@@ -193,10 +193,12 @@ desc("creation_opts") ->
     ?DESC(emqx_resource_schema, "creation_opts");
 desc("config_connector") ->
     ?DESC("config_connector");
-desc("kinesis_action") ->
+desc(kinesis_action) ->
     ?DESC("kinesis_action");
-desc("action_parameters") ->
+desc(action_parameters) ->
     ?DESC("action_parameters");
+desc(connector_resource_opts) ->
+    ?DESC(emqx_resource_schema, "resource_opts");
 desc(_) ->
     undefined.
 
@@ -209,8 +211,6 @@ conn_bridge_examples(Method) ->
             }
         }
     ].
-
-%% TODO Fix these examples
 
 connector_examples(Method) ->
     [
