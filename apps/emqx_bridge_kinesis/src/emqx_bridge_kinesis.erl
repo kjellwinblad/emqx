@@ -205,8 +205,8 @@ conn_bridge_examples(Method) ->
 connector_examples(Method) ->
     [
         #{
-            <<"kafka_producer">> => #{
-                summary => <<"Kafka Producer Connector">>,
+            <<"kinesis">> => #{
+                summary => <<"Kinesis Connector">>,
                 value => values({Method, connector})
             }
         }
@@ -215,8 +215,8 @@ connector_examples(Method) ->
 bridge_v2_examples(Method) ->
     [
         #{
-            <<"kafka_producer">> => #{
-                summary => <<"Kafka Producer Action">>,
+            <<"kinesis">> => #{
+                summary => <<"Kinesis Action">>,
                 value => values({Method, bridge_v2_producer})
             }
         }
@@ -252,8 +252,8 @@ values({get, KafkaType}) ->
 values({post, connector}) ->
     maps:merge(
         #{
-            name => <<"my_kafka_producer_connector">>,
-            type => <<"kafka_producer">>
+            name => <<"my_kinesis_connector">>,
+            type => <<"kinesis">>
         },
         values(common_config)
     );
@@ -274,64 +274,29 @@ values({put, KafkaType}) ->
 values(bridge_v2_producer) ->
     #{
         enable => true,
-        connector => <<"my_kafka_producer_connector">>,
+        connector => <<"my_kinesis_connector">>,
         parameters => values(producer_values),
-        local_topic => <<"mqtt/local/topic">>,
         resource_opts => #{
-            health_check_interval => "32s"
+            <<"batch_size">> => 100,
+            <<"inflight_window">> => 100,
+            <<"max_buffer_bytes">> => <<"256MB">>,
+            <<"request_ttl">> => <<"45s">>
         }
     };
 values(common_config) ->
     #{
-        authentication => #{
-            mechanism => <<"plain">>,
-            username => <<"username">>,
-            password => <<"******">>
-        },
-        bootstrap_hosts => <<"localhost:9092">>,
-        connect_timeout => <<"5s">>,
-        enable => true,
-        metadata_request_timeout => <<"4s">>,
-        min_metadata_refresh_interval => <<"3s">>,
-        socket_opts => #{
-            sndbuf => <<"1024KB">>,
-            recbuf => <<"1024KB">>,
-            nodelay => true,
-            tcp_keepalive => <<"none">>
-        }
+        <<"enable">> => true,
+        <<"aws_access_key_id">> => <<"your_access_key">>,
+        <<"aws_secret_access_key">> => <<"aws_secret_key">>,
+        <<"endpoint">> => <<"http://localhost:4566">>,
+        <<"max_retries">> => 2,
+        <<"pool_size">> => 8
     };
 values(producer_values) ->
     #{
-        topic => <<"kafka-topic">>,
-        message => #{
-            key => <<"${.clientid}">>,
-            value => <<"${.}">>,
-            timestamp => <<"${.timestamp}">>
-        },
-        max_batch_bytes => <<"896KB">>,
-        compression => <<"no_compression">>,
-        partition_strategy => <<"random">>,
-        required_acks => <<"all_isr">>,
-        partition_count_refresh_interval => <<"60s">>,
-        kafka_headers => <<"${pub_props}">>,
-        kafka_ext_headers => [
-            #{
-                kafka_ext_header_key => <<"clientid">>,
-                kafka_ext_header_value => <<"${clientid}">>
-            },
-            #{
-                kafka_ext_header_key => <<"topic">>,
-                kafka_ext_header_value => <<"${topic}">>
-            }
-        ],
-        kafka_header_value_encode_mode => none,
-        max_inflight => 10,
-        buffer => #{
-            mode => <<"hybrid">>,
-            per_partition_limit => <<"2GB">>,
-            segment_bytes => <<"100MB">>,
-            memory_overload_protection => true
-        }
+        <<"partition_key">> => <<"any_key">>,
+        <<"payload_template">> => <<"${.}">>,
+        <<"stream_name">> => <<"my_stream">>
     }.
 
 values(producer, _Method) ->
@@ -351,13 +316,39 @@ values(producer, _Method) ->
         }
     }.
 
+% #{<<"actions">> =>
+%       #{<<"kinesis">> =>
+%             #{<<"kinesis_test">> =>
+%                   #{<<"connector">> => <<"kinesis_test">>,<<"enable">> => true,
+%                     <<"parameters">> =>
+%                         ,
+%                     <<"resource_opts">> =>
+%                         #{<<"batch_size">> => 1,
+%                           <<"health_check_interval">> => <<"15s">>,
+%                           <<"inflight_window">> => 100,
+%                           <<"max_buffer_bytes">> => <<"256MB">>,
+%                           <<"query_mode">> => <<"async">>,
+%                           <<"request_ttl">> => <<"45s">>,
+%                           <<"worker_pool_size">> => 16}}}},
+%   <<"bridges">> => #{<<"kinesis_producer">> => #{}},
+%   <<"cluster">> =>
+%       #{<<"discovery_strategy">> => <<"manual">>,
+%         <<"name">> => <<"emqxcl">>},
+%   <<"connectors">> =>
+%       #{<<"kinesis">> =>
+%             #{<<"kinesis_test">> =>
+%                   #{<<"aws_access_key_id">> => <<"any_value">>,
+%                     <<"aws_secret_access_key">> => <<"any_value">>,
+%                     <<"enable">> => true,
+%                     <<"endpoint">> => <<"http://localhost:4566">>,
+%                     <<"max_retries">> => 2,<<"pool_size">> => 8}}},
+
 %%-------------------------------------------------------------------------------------------------
 %% Helper fns
 %%-------------------------------------------------------------------------------------------------
 
 connector_config_fields() ->
-    emqx_connector_schema:common_fields() ++
-        fields(connector_config).
+    fields(connector_config).
 
 sc(Type, Meta) -> hoconsc:mk(Type, Meta).
 
