@@ -82,7 +82,6 @@ max_retries.desc:
 max_retries.label:
 """Max Retries"""
 
-
 action_parameters.desc:
 """Action specific configuration."""
 
@@ -101,4 +100,5 @@ config_connector.desc:
 
 config_connector.label:
 """GCP PubSub Producer Client Configuration"""
+
 }
