@@ -169,7 +169,11 @@ fields("post_producer") ->
 fields("put_producer") ->
     fields("config_producer");
 fields("config_connector") ->
-    connector_config_fields();
+    emqx_connector_schema:common_fields() ++
+        connector_config_fields() ++
+        emqx_connector_schema:resource_opts_ref(?MODULE, connector_resource_opts);
+fields(connector_resource_opts) ->
+    emqx_connector_schema:resource_opts_fields();
 fields("put_bridge_v2") ->
     fields(kinesis_action);
 fields("get_bridge_v2") ->
@@ -321,33 +325,6 @@ values(producer, _Method) ->
             max_buffer_bytes => 100 * 1024 * 1024
         }
     }.
-
-% #{<<"actions">> =>
-%       #{<<"kinesis">> =>
-%             #{<<"kinesis_test">> =>
-%                   #{<<"connector">> => <<"kinesis_test">>,<<"enable">> => true,
-%                     <<"parameters">> =>
-%                         ,
-%                     <<"resource_opts">> =>
-%                         #{<<"batch_size">> => 1,
-%                           <<"health_check_interval">> => <<"15s">>,
-%                           <<"inflight_window">> => 100,
-%                           <<"max_buffer_bytes">> => <<"256MB">>,
-%                           <<"query_mode">> => <<"async">>,
-%                           <<"request_ttl">> => <<"45s">>,
-%                           <<"worker_pool_size">> => 16}}}},
-%   <<"bridges">> => #{<<"kinesis_producer">> => #{}},
-%   <<"cluster">> =>
-%       #{<<"discovery_strategy">> => <<"manual">>,
-%         <<"name">> => <<"emqxcl">>},
-%   <<"connectors">> =>
-%       #{<<"kinesis">> =>
-%             #{<<"kinesis_test">> =>
-%                   #{<<"aws_access_key_id">> => <<"any_value">>,
-%                     <<"aws_secret_access_key">> => <<"any_value">>,
-%                     <<"enable">> => true,
-%                     <<"endpoint">> => <<"http://localhost:4566">>,
-%                     <<"max_retries">> => 2,<<"pool_size">> => 8}}},
 
 %%-------------------------------------------------------------------------------------------------
 %% Helper fns

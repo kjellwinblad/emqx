@@ -432,7 +432,6 @@ transform_bridges_v1_to_connectors_and_bridges_v2(RawConfig) ->
         RawConfig,
         ConnectorFields
     ),
-    % x:show(new_raw_conf, NewRawConf),
     NewRawConf.
 
 %%======================================================================================
