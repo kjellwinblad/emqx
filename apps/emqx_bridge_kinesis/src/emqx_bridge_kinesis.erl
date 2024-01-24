@@ -236,7 +236,7 @@ values({get, connector}) ->
         },
         values({post, connector})
     );
-values({get, KafkaType}) ->
+values({get, Type}) ->
     maps:merge(
         #{
             status => <<"connected">>,
@@ -247,7 +247,7 @@ values({get, KafkaType}) ->
                 }
             ]
         },
-        values({post, KafkaType})
+        values({post, Type})
     );
 values({post, connector}) ->
     maps:merge(
@@ -257,20 +257,20 @@ values({post, connector}) ->
         },
         values(common_config)
     );
-values({post, KafkaType}) ->
+values({post, Type}) ->
     maps:merge(
         #{
-            name => <<"my_kafka_producer_action">>,
-            type => <<"kafka_producer">>
+            name => <<"my_kinesis_action">>,
+            type => <<"kinesis">>
         },
-        values({put, KafkaType})
+        values({put, Type})
     );
 values({put, bridge_v2_producer}) ->
     values(bridge_v2_producer);
 values({put, connector}) ->
     values(common_config);
-values({put, KafkaType}) ->
-    maps:merge(values(common_config), values(KafkaType));
+values({put, Type}) ->
+    maps:merge(values(common_config), values(Type));
 values(bridge_v2_producer) ->
     #{
         enable => true,
