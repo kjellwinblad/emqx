@@ -36,6 +36,8 @@ resource_type(matrix) ->
     emqx_postgresql;
 resource_type(mongodb) ->
     emqx_bridge_mongodb_connector;
+resource_type(oracle) ->
+    emqx_oracle;
 resource_type(influxdb) ->
     emqx_bridge_influxdb_connector;
 resource_type(cassandra) ->
@@ -137,6 +139,14 @@ connector_structs() ->
                 hoconsc:map(name, ref(emqx_bridge_mongodb, "config_connector")),
                 #{
                     desc => <<"MongoDB Connector Config">>,
+                    required => false
+                }
+            )},
+        {oracle,
+            mk(
+                hoconsc:map(name, ref(emqx_bridge_oracle, "config_connector")),
+                #{
+                    desc => <<"Oracle Connector Config">>,
                     required => false
                 }
             )},
@@ -247,6 +257,7 @@ schema_modules() ->
         emqx_bridge_kinesis,
         emqx_bridge_matrix,
         emqx_bridge_mongodb,
+        emqx_bridge_oracle,
         emqx_bridge_influxdb,
         emqx_bridge_cassandra,
         emqx_bridge_mysql,
@@ -280,6 +291,7 @@ api_schemas(Method) ->
         api_ref(emqx_bridge_kinesis, <<"kinesis">>, Method ++ "_connector"),
         api_ref(emqx_bridge_matrix, <<"matrix">>, Method ++ "_connector"),
         api_ref(emqx_bridge_mongodb, <<"mongodb">>, Method ++ "_connector"),
+        api_ref(emqx_bridge_oracle, <<"oracle">>, Method ++ "_connector"),
         api_ref(emqx_bridge_influxdb, <<"influxdb">>, Method ++ "_connector"),
         api_ref(emqx_bridge_cassandra, <<"cassandra">>, Method ++ "_connector"),
         api_ref(emqx_bridge_mysql, <<"mysql">>, Method ++ "_connector"),
