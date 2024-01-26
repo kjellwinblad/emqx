@@ -158,12 +158,12 @@ fields(action_parameters) ->
                 #{desc => ?DESC("sql_template"), default => ?DEFAULT_SQL, format => <<"sql">>}
             )},
         {local_topic,
-         hoconsc:mk(
-           binary(),
-           #{
-             desc => ?DESC("local_topic")
-            }
-          )}
+            hoconsc:mk(
+                binary(),
+                #{
+                    desc => ?DESC("local_topic")
+                }
+            )}
     ];
 fields("config_connector") ->
     emqx_connector_schema:common_fields() ++
@@ -192,7 +192,7 @@ fields("config") ->
         fields(connector_fields);
 fields(connector_fields) ->
     (emqx_oracle_schema:fields(config) --
-            emqx_connector_schema_lib:prepare_statement_fields());
+        emqx_connector_schema_lib:prepare_statement_fields());
 fields("post") ->
     fields("post", oracle);
 fields("put") ->
