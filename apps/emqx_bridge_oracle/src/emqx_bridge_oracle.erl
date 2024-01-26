@@ -9,7 +9,9 @@
 -include_lib("emqx_resource/include/emqx_resource.hrl").
 
 -export([
-    conn_bridge_examples/1
+    bridge_v2_examples/1,
+    conn_bridge_examples/1,
+    connector_examples/1
 ]).
 
 -export([
@@ -20,22 +22,25 @@
     config_validator/1
 ]).
 
+-define(CONNECTOR_TYPE, oracle).
+-define(ACTION_TYPE, ?CONNECTOR_TYPE).
+
 -define(DEFAULT_SQL, <<
     "insert into t_mqtt_msgs(msgid, topic, qos, payload) "
     "values (${id}, ${topic}, ${qos}, ${payload})"
 >>).
 
-conn_bridge_examples(Method) ->
+conn_bridge_examples(_Method) ->
     [
         #{
             <<"oracle">> => #{
                 summary => <<"Oracle Database Bridge">>,
-                value => values(Method)
+                value => conn_bridge_examples_values()
             }
         }
     ].
 
-values(_Method) ->
+conn_bridge_examples_values() ->
     #{
         enable => true,
         type => oracle,
@@ -58,6 +63,51 @@ values(_Method) ->
         }
     }.
 
+%% TODO FIX these examples
+connector_examples(Method) ->
+    [
+        #{
+            <<"kinesis">> =>
+                #{
+                    summary => <<"Kinesis Connector">>,
+                    value => emqx_connector_schema:connector_values(
+                        Method, ?CONNECTOR_TYPE, connector_values()
+                    )
+                }
+        }
+    ].
+
+connector_values() ->
+    #{
+        <<"aws_access_key_id">> => <<"your_access_key">>,
+        <<"aws_secret_access_key">> => <<"aws_secret_key">>,
+        <<"endpoint">> => <<"http://localhost:4566">>,
+        <<"max_retries">> => 2,
+        <<"pool_size">> => 8
+    }.
+
+bridge_v2_examples(Method) ->
+    [
+        #{
+            <<"kinesis">> =>
+                #{
+                    summary => <<"Kinesis Action">>,
+                    value => emqx_bridge_v2_schema:action_values(
+                        Method, ?ACTION_TYPE, ?CONNECTOR_TYPE, action_values()
+                    )
+                }
+        }
+    ].
+
+action_values() ->
+    #{
+        parameters => #{
+            <<"partition_key">> => <<"any_key">>,
+            <<"payload_template">> => <<"${.}">>,
+            <<"stream_name">> => <<"my_stream">>
+        }
+    }.
+
 %% -------------------------------------------------------------------------------------------------
 %% Hocon Schema Definitions
 
@@ -65,6 +115,62 @@ namespace() -> "bridge_oracle".
 
 roots() -> [].
 
+fields(Field) when
+    Field == "get_connector";
+    Field == "put_connector";
+    Field == "post_connector"
+->
+    emqx_connector_schema:api_fields(
+        Field,
+        ?CONNECTOR_TYPE,
+        fields(connector_fields)
+    );
+fields(Field) when
+    Field == "get_bridge_v2";
+    Field == "post_bridge_v2";
+    Field == "put_bridge_v2"
+->
+    emqx_bridge_v2_schema:api_fields(Field, ?ACTION_TYPE, fields(oracle_action));
+fields(action) ->
+    {?ACTION_TYPE,
+        hoconsc:mk(
+            hoconsc:map(name, hoconsc:ref(?MODULE, oracle_action)),
+            #{
+                desc => <<"Oracle Action Config">>,
+                required => false
+            }
+        )};
+fields(oracle_action) ->
+    emqx_bridge_v2_schema:make_producer_action_schema(
+        hoconsc:mk(
+            hoconsc:ref(?MODULE, action_parameters),
+            #{
+                required => true,
+                desc => ?DESC("action_parameters")
+            }
+        )
+    );
+fields(action_parameters) ->
+    [
+        {sql,
+            hoconsc:mk(
+                binary(),
+                #{desc => ?DESC("sql_template"), default => ?DEFAULT_SQL, format => <<"sql">>}
+            )},
+        {local_topic,
+         hoconsc:mk(
+           binary(),
+           #{
+             desc => ?DESC("local_topic")
+            }
+          )}
+    ];
+fields("config_connector") ->
+    emqx_connector_schema:common_fields() ++
+        fields(connector_fields) ++
+        emqx_connector_schema:resource_opts_ref(?MODULE, connector_resource_opts);
+fields(connector_resource_opts) ->
+    emqx_connector_schema:resource_opts_fields();
 fields("config") ->
     [
         {enable,
@@ -83,7 +189,9 @@ fields("config") ->
                 #{desc => ?DESC("local_topic"), default => undefined}
             )}
     ] ++ emqx_resource_schema:fields("resource_opts") ++
-        (emqx_oracle_schema:fields(config) --
+        fields(connector_fields);
+fields(connector_fields) ->
+    (emqx_oracle_schema:fields(config) --
             emqx_connector_schema_lib:prepare_statement_fields());
 fields("post") ->
     fields("post", oracle);
