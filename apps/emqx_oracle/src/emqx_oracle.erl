@@ -230,7 +230,7 @@ on_query(
         installed_channels := Channels
     } = _ConnectorState
 ) ->
-    State = maps:get(TypeOrKey, Channels),
+    State = maps:get(TypeOrKey, Channels, #{}),
     ?SLOG(debug, #{
         msg => "oracle_connector_received_sql_query",
         connector => InstId,
@@ -248,8 +248,6 @@ on_batch_query(
     BatchReq,
     #{
         pool_name := PoolName,
-        params_tokens := Tokens,
-        prepare_sql := Sts,
         installed_channels := Channels
     } = ConnectorState
 ) ->

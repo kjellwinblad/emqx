@@ -1,31 +1,34 @@
 #!/bin/bash
 
-# Function to clean up Docker container on exit
+# Function to clean up Docker containers on exit
 cleanup() {
-    echo "Stopping and removing the Oracle DB container..."
-    docker stop oracledb
-    docker rm oracledb
+    echo "Stopping and removing the Oracle DB and Toxiproxy containers..."
+    docker stop oracledb toxiproxy
+    docker rm oracledb toxiproxy
     exit 0
 }
 
 # Trap CTRL-C (SIGINT) and call the cleanup function
 trap cleanup SIGINT
 
-# Choose the appropriate docker run command based on your needs
-# Uncomment the one you need and comment out the others
-
 # Start Oracle Database docker image locally
 docker run --name oracledb -p 1521:1521 -d oracleinanutshell/oracle-xe-11g:1.0.0
 
-# Start Oracle Database docker image remotely
-#docker run --name oracledb -p 1521:1521 -e ORACLE_ALLOW_REMOTE=true -d oracleinanutshell/oracle-xe-11g:1.0.0
+# Start Toxiproxy
+docker run --name toxiproxy -p 8474:8474 -p 1522:1522 -d shopify/toxiproxy
 
-# Start with disabled disk asynch IO
-#docker run --name oracledb -p 1521:1521 -e ORACLE_DISABLE_ASYNCH_IO=true -d oracleinanutshell/oracle-xe-11g:1.0.0
-
-# Wait for the database to start up
-echo "Waiting for the Oracle DB to start up..."
+# Wait for the database and Toxiproxy to start up
+echo "Waiting for the Oracle DB and Toxiproxy to start up..."
 sleep 10 # Adjust the sleep time if necessary
+
+# Configure Toxiproxy to create a proxy for Oracle server
+echo "Configuring Toxiproxy..."
+curl -X POST http://localhost:8474/proxies -d '{
+    "name": "oracle",
+    "listen": "0.0.0.0:1522",
+    "upstream": "oracledb:1521",
+    "enabled": true
+}'
 
 # SQL script to create the table
 SQL_SCRIPT="
@@ -62,20 +65,20 @@ docker exec -it oracledb bash -c '
 rm create_table.sql
 
 # Keep querying the table and display its contents
-echo "Oracle DB is running. Press CTRL-C to stop and remove the container."
+echo "Oracle DB is running through Toxiproxy. Press CTRL-C to stop and remove the containers."
 while true; do
     echo "Querying the t_mqtt_msgs table..."
 
-    docker exec -it oracledb bash -c '
-        ORACLE_HOME=/u01/app/oracle/product/11.2.0/xe/
-        export ORACLE_HOME
-        export PATH=$PATH:$ORACLE_HOME/bin
-        echo "
-        SET PAGESIZE 50
-        SELECT * FROM t_mqtt_msgs;
-        exit;
-        " | sqlplus -S system/oracle@//localhost:1521/XE
-    '
+    # docker exec -it oracledb bash -c '
+    #     ORACLE_HOME=/u01/app/oracle/product/11.2.0/xe/
+    #     export ORACLE_HOME
+    #     export PATH=$PATH:$ORACLE_HOME/bin
+    #     echo "
+    #     SET PAGESIZE 50
+    #     SELECT * FROM t_mqtt_msgs;
+    #     exit;
+    #     " | sqlplus -S system/oracle@//localhost:1521/XE
+    # '
 
     # Wait for a bit before the next query
     sleep 10 # Adjust this for how often you want to refresh the data
