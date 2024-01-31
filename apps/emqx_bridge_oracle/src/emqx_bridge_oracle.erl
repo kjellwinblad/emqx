@@ -63,13 +63,12 @@ conn_bridge_examples_values() ->
         }
     }.
 
-%% TODO FIX these examples
 connector_examples(Method) ->
     [
         #{
-            <<"kinesis">> =>
+            <<"oracle">> =>
                 #{
-                    summary => <<"Kinesis Connector">>,
+                    summary => <<"Oracle Connector">>,
                     value => emqx_connector_schema:connector_values(
                         Method, ?CONNECTOR_TYPE, connector_values()
                     )
@@ -79,19 +78,25 @@ connector_examples(Method) ->
 
 connector_values() ->
     #{
-        <<"aws_access_key_id">> => <<"your_access_key">>,
-        <<"aws_secret_access_key">> => <<"aws_secret_key">>,
-        <<"endpoint">> => <<"http://localhost:4566">>,
-        <<"max_retries">> => 2,
-        <<"pool_size">> => 8
+        <<"username">> => <<"system">>,
+        <<"password">> => <<"oracle">>,
+        <<"server">> => <<"127.0.0.1:1521">>,
+        <<"service_name">> => <<"XE">>,
+        <<"sid">> => <<"XE">>,
+        <<"pool_size">> => 8,
+        <<"resource_opts">> =>
+            #{
+                <<"health_check_interval">> => <<"15s">>,
+                <<"start_timeout">> => <<"5s">>
+            }
     }.
 
 bridge_v2_examples(Method) ->
     [
         #{
-            <<"kinesis">> =>
+            <<"oracle">> =>
                 #{
-                    summary => <<"Kinesis Action">>,
+                    summary => <<"Oracle Action">>,
                     value => emqx_bridge_v2_schema:action_values(
                         Method, ?ACTION_TYPE, ?CONNECTOR_TYPE, action_values()
                     )
@@ -102,9 +107,7 @@ bridge_v2_examples(Method) ->
 action_values() ->
     #{
         parameters => #{
-            <<"partition_key">> => <<"any_key">>,
-            <<"payload_template">> => <<"${.}">>,
-            <<"stream_name">> => <<"my_stream">>
+            <<"sql">> => ?DEFAULT_SQL
         }
     }.
 

@@ -696,7 +696,6 @@ t_on_get_status(Config) ->
     ),
     ok.
 
-%% TODO
 t_no_sid_nor_service_name(Config0) ->
     OracleConfig0 = ?config(oracle_config, Config0),
     OracleConfig1 = maps:remove(<<"sid">>, OracleConfig0),
