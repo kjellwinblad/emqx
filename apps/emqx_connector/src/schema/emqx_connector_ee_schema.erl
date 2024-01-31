@@ -147,7 +147,8 @@ connector_structs() ->
                 hoconsc:map(name, ref(emqx_bridge_oracle, "config_connector")),
                 #{
                     desc => <<"Oracle Connector Config">>,
-                    required => false
+                    required => false,
+                    validator => fun emqx_bridge_oracle:config_validator/1
                 }
             )},
         {influxdb,

@@ -260,9 +260,7 @@ oracle_config(TestCase, _ConnectionType, Config) ->
 parse_and_check(ConfigString, Name) ->
     {ok, RawConf} = hocon:binary(ConfigString, #{format => map}),
     TypeBin = ?BRIDGE_TYPE_BIN,
-    %%x:show(before_check_plain, RawConf),
     hocon_tconf:check_plain(emqx_bridge_schema, RawConf, #{required => false, atom_key => false}),
-    %%x:show(after_check_plain),
     #{<<"bridges">> := #{TypeBin := #{Name := Config}}} = RawConf,
     Config.
 
@@ -705,7 +703,6 @@ t_no_sid_nor_service_name(Config0) ->
     OracleConfig = maps:remove(<<"service_name">>, OracleConfig1),
     NewOracleConfig = {oracle_config, OracleConfig},
     Config = lists:keyreplace(oracle_config, 1, Config0, NewOracleConfig),
-    %%x:show(the_config, Config),
     ?assertMatch(
         {error, #{kind := validation_error, reason := "neither SID nor Service Name was set"}},
         create_bridge(Config)

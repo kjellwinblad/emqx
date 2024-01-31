@@ -184,7 +184,6 @@ on_get_channel_status(
             {?status_disconnected, {unhealthy_target, ?UNHEALTHY_TARGET_MSG}};
         {error, _Reason} ->
             %% do not log error, it is logged in prepare_sql_to_conn
-            %x:show(xxxx_do_check_prepares_error, _Reason),
             connecting
     end.
 % #{stream_name := StreamName} = maps:get(ChannelId, Channels),
@@ -344,7 +343,6 @@ on_get_status(_InstId, #{pool_name := Pool} = _State) ->
         true ->
             ?status_connected;
         false ->
-            %% x:show(xxx_conn_status_disconnected),
             ?status_disconnected
     end.
 

@@ -216,8 +216,6 @@ config_validator(#{<<"server">> := Server} = Config) when
         not is_map_key(<<"sid">>, Config) andalso
         not is_map_key(<<"service_name">>, Config)
 ->
-    %%x:show(xxx_validate_real, Config),
     {error, "neither SID nor Service Name was set"};
 config_validator(_Config) ->
-    %%x:show(xxx_validate, _Config),
     ok.

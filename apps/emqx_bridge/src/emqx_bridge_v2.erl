@@ -1556,8 +1556,6 @@ split_and_validate_bridge_v1_config(BridgeV1Type, BridgeName, RawConf, PreviousR
     Output = emqx_connector_schema:transform_bridges_v1_to_connectors_and_bridges_v2(
         FakeGlobalConfig
     ),
-    %%x:show(xxx_split_in, FakeGlobalConfig),
-    %%x:show(xxx_split_res, Output),
     ConfRootKey = get_conf_root_key(Output),
     NewBridgeV2RawConf =
         emqx_utils_maps:deep_get(
@@ -1599,7 +1597,6 @@ split_and_validate_bridge_v1_config(BridgeV1Type, BridgeName, RawConf, PreviousR
             }
         }
     },
-    %%x:show(xxx_conf_check, NewFakeGlobalConfig),
     try
         hocon_tconf:check_plain(
             emqx_schema,
@@ -1620,7 +1617,6 @@ split_and_validate_bridge_v1_config(BridgeV1Type, BridgeName, RawConf, PreviousR
     catch
         %% validation errors
         throw:Reason1 ->
-            %%x:show(xxx_conf_check_error, Reason1),
             {error, Reason1}
     end.
 
