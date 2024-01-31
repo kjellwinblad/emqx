@@ -123,7 +123,7 @@ fields(Field) when
     emqx_connector_schema:api_fields(
         Field,
         ?CONNECTOR_TYPE,
-        fields(connector_fields)
+        fields("config_connector")
     );
 fields(Field) when
     Field == "get_bridge_v2";
@@ -156,13 +156,6 @@ fields(action_parameters) ->
             hoconsc:mk(
                 binary(),
                 #{desc => ?DESC("sql_template"), default => ?DEFAULT_SQL, format => <<"sql">>}
-            )},
-        {local_topic,
-            hoconsc:mk(
-                binary(),
-                #{
-                    desc => ?DESC("local_topic")
-                }
             )}
     ];
 fields("config_connector") ->
@@ -223,6 +216,8 @@ config_validator(#{<<"server">> := Server} = Config) when
         not is_map_key(<<"sid">>, Config) andalso
         not is_map_key(<<"service_name">>, Config)
 ->
+    %%x:show(xxx_validate_real, Config),
     {error, "neither SID nor Service Name was set"};
-config_validator(_) ->
+config_validator(_Config) ->
+    %%x:show(xxx_validate, _Config),
     ok.
