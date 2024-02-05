@@ -24,7 +24,7 @@
     on_get_status/2
 ]).
 
--import(hoconsc, [mk/2, enum/1, ref/2]).
+-import(hoconsc, [mk/2]).
 
 -define(ROCKETMQ_HOST_OPTIONS, #{
     default_port => 9876
