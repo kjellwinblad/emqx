@@ -216,7 +216,7 @@ on_query(InstanceId, Query, State) ->
     do_query(InstanceId, Query, send_sync, State).
 
 %% We only support batch inserts and all messages must have the same topic
-on_batch_query(InstanceId, [{send_message, _Msg} | _] = Query, State) ->
+on_batch_query(InstanceId, [{ChannelId, _Msg} | _] = Query, State) ->
     do_query(InstanceId, Query, batch_send_sync, State);
 on_batch_query(_InstanceId, Query, _State) ->
     {error, {unrecoverable_error, {invalid_request, Query}}}.
@@ -238,7 +238,7 @@ status_result(_Status) -> ?status_connecting.
 
 do_query(
     InstanceId,
-    {ChannelId, _QueryData} = Query,
+    Query,
     QueryFunc,
     #{
         client_id := ClientId,
@@ -250,6 +250,7 @@ do_query(
         "rocketmq_connector_received",
         #{connector => InstanceId, query => Query, state => State}
     ),
+    ChannelId = get_channel_id(Query),
     #{
         topic_tokens := TopicTks,
         templates := Templates,
@@ -283,6 +284,9 @@ do_query(
             ),
             Result
     end.
+
+get_channel_id({ChannelId, _}) -> ChannelId;
+get_channel_id([{ChannelId, _} | _]) -> ChannelId.
 
 safe_do_produce(InstanceId, QueryFunc, ClientId, TopicKey, Data, ProducerOpts, RequestTimeout) ->
     try
