@@ -216,7 +216,7 @@ on_query(InstanceId, Query, State) ->
     do_query(InstanceId, Query, send_sync, State).
 
 %% We only support batch inserts and all messages must have the same topic
-on_batch_query(InstanceId, [{ChannelId, _Msg} | _] = Query, State) ->
+on_batch_query(InstanceId, [{_ChannelId, _Msg} | _] = Query, State) ->
     do_query(InstanceId, Query, batch_send_sync, State);
 on_batch_query(_InstanceId, Query, _State) ->
     {error, {unrecoverable_error, {invalid_request, Query}}}.

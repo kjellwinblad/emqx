@@ -62,7 +62,7 @@ init_per_group(_Group, Config) ->
 end_per_group(Group, Config) when Group =:= with_batch; Group =:= without_batch ->
     ProxyHost = ?config(proxy_host, Config),
     ProxyPort = ?config(proxy_port, Config),
-    emqx_common_test_helpers:reset_proxy(ProxyHost, ProxyPort),
+    % emqx_common_test_helpers:reset_proxy(ProxyHost, ProxyPort),
     ok;
 end_per_group(_Group, _Config) ->
     ok.
@@ -82,7 +82,7 @@ init_per_testcase(_Testcase, Config) ->
 end_per_testcase(_Testcase, Config) ->
     ProxyHost = ?config(proxy_host, Config),
     ProxyPort = ?config(proxy_port, Config),
-    emqx_common_test_helpers:reset_proxy(ProxyHost, ProxyPort),
+    % emqx_common_test_helpers:reset_proxy(ProxyHost, ProxyPort),
     ok = snabbkaffe:stop(),
     delete_bridge(Config),
     ok.
@@ -108,7 +108,7 @@ common_init(ConfigT) ->
             % Setup toxiproxy
             ProxyHost = os:getenv("PROXY_HOST", "toxiproxy"),
             ProxyPort = list_to_integer(os:getenv("PROXY_PORT", "8474")),
-            emqx_common_test_helpers:reset_proxy(ProxyHost, ProxyPort),
+            %emqx_common_test_helpers:reset_proxy(ProxyHost, ProxyPort),
             % Ensure enterprise bridge module is loaded
             ok = emqx_common_test_helpers:start_apps([
                 emqx_conf, emqx_resource, emqx_bridge, rocketmq
@@ -196,14 +196,17 @@ create_bridge_http(Params) ->
 send_message(Config, Payload) ->
     Name = ?GET_CONFIG(rocketmq_name, Config),
     BridgeType = ?GET_CONFIG(rocketmq_bridge_type, Config),
-    BridgeID = emqx_bridge_resource:bridge_id(BridgeType, Name),
-    emqx_bridge:send_message(BridgeID, Payload).
+    % BridgeID = emqx_bridge_resource:bridge_id(BridgeType, Name),
+    ActionId = emqx_bridge_v2:id(BridgeType, Name),
+    emqx_bridge_v2:query(BridgeType, Name, {ActionId, Payload}, #{}).
+% emqx_bridge:send_message(BridgeID, Payload).
 
 query_resource(Config, Request) ->
     Name = ?GET_CONFIG(rocketmq_name, Config),
     BridgeType = ?GET_CONFIG(rocketmq_bridge_type, Config),
-    ResourceID = emqx_bridge_resource:resource_id(BridgeType, Name),
-    emqx_resource:query(ResourceID, Request, #{timeout => 500}).
+    ID = emqx_bridge_v2:id(BridgeType, Name),
+    ResID = emqx_connector_resource:resource_id(BridgeType, Name),
+    emqx_resource:query(ID, Request, #{timeout => 500, connector_resource_id => ResID}).
 
 %%------------------------------------------------------------------------------
 %% Testcases
@@ -280,7 +283,10 @@ t_simple_query(Config) ->
         {ok, _},
         create_bridge(Config)
     ),
-    Request = {send_message, #{message => <<"Hello">>}},
+    Type = ?GET_CONFIG(rocketmq_bridge_type, Config),
+    Name = ?GET_CONFIG(rocketmq_name, Config),
+    ActionId = emqx_bridge_v2:id(Type, Name),
+    Request = {ActionId, #{message => <<"Hello">>}},
     Result = query_resource(Config, Request),
     ?assertEqual(ok, Result),
     ok.
