@@ -20,8 +20,7 @@
 -export([
     bridge_v2_examples/1,
     connector_examples/1,
-    conn_bridge_examples/1,
-    values/1
+    conn_bridge_examples/1
 ]).
 
 -define(CONNECTOR_TYPE, rocketmq).
@@ -37,14 +36,14 @@ conn_bridge_examples(Method) ->
         #{
             <<"rocketmq">> => #{
                 summary => <<"RocketMQ Bridge">>,
-                value => values(Method)
+                value => conn_bridge_example_values(Method)
             }
         }
     ].
 
-values(get) ->
-    values(post);
-values(post) ->
+conn_bridge_example_values(get) ->
+    conn_bridge_example_values(post);
+conn_bridge_example_values(post) ->
     #{
         enable => true,
         type => rocketmq,
@@ -62,8 +61,8 @@ values(post) ->
             max_buffer_bytes => ?DEFAULT_BUFFER_BYTES
         }
     };
-values(put) ->
-    values(post).
+conn_bridge_example_values(put) ->
+    conn_bridge_example_values(post).
 
 %% TODO fix these examples
 
@@ -72,7 +71,7 @@ connector_examples(Method) ->
         #{
             <<"oracle">> =>
                 #{
-                    summary => <<"Oracle Connector">>,
+                    summary => <<"RocketMQ Connector">>,
                     value => emqx_connector_schema:connector_values(
                         Method, ?CONNECTOR_TYPE, connector_values()
                     )
@@ -82,17 +81,14 @@ connector_examples(Method) ->
 
 connector_values() ->
     #{
-        <<"username">> => <<"system">>,
-        <<"password">> => <<"oracle">>,
-        <<"server">> => <<"127.0.0.1:1521">>,
-        <<"service_name">> => <<"XE">>,
-        <<"sid">> => <<"XE">>,
+        <<"enable">> => true,
+        <<"servers">> => <<"127.0.0.1:9876">>,
         <<"pool_size">> => 8,
-        <<"resource_opts">> =>
-            #{
-                <<"health_check_interval">> => <<"15s">>,
-                <<"start_timeout">> => <<"5s">>
-            }
+        <<"resource_opts">> => #{
+            <<"health_check_interval">> => <<"15s">>,
+            <<"start_after_created">> => true,
+            <<"start_timeout">> => <<"5s">>
+        }
     }.
 
 bridge_v2_examples(Method) ->
@@ -110,8 +106,12 @@ bridge_v2_examples(Method) ->
 
 action_values() ->
     #{
-        parameters => #{
-            <<"sql">> => <<"F">>
+        <<"parameters">> => #{
+            <<"topic">> => <<"TopicTest">>,
+            <<"template">> => ?DEFAULT_TEMPLATE,
+            <<"refresh_interval">> => <<"3s">>,
+            <<"send_buffer">> => <<"1024KB">>,
+            <<"sync_timeout">> => <<"3s">>
         }
     }.
 
