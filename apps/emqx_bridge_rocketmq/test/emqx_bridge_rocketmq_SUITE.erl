@@ -276,6 +276,7 @@ t_get_status(Config) ->
     ResourceID = emqx_bridge_resource:resource_id(BridgeType, Name),
 
     ?assertEqual({ok, connected}, emqx_resource_manager:health_check(ResourceID)),
+    ?assertMatch(#{status := connected}, emqx_bridge_v2:health_check(BridgeType, Name)),
     ok.
 
 t_simple_query(Config) ->
