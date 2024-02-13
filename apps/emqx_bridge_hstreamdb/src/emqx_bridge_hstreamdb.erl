@@ -185,7 +185,13 @@ fields(action_parameters) ->
             mk(binary(), #{default => <<"${payload}">>, desc => ?DESC("record_template")})},
         {aggregation_pool_size,
             mk(integer(), #{default => 8, desc => ?DESC("aggregation_pool_size")})},
-        {writer_pool_size, mk(integer(), #{default => 8, desc => ?DESC("writer_pool_size")})}
+        {max_batches, mk(integer(), #{default => 500, desc => ?DESC("max_batches")})},
+        {writer_pool_size, mk(integer(), #{default => 8, desc => ?DESC("writer_pool_size")})},
+        {batch_size, mk(integer(), #{default => 100, desc => ?DESC("batch_size")})},
+        {batch_interval,
+            mk(emqx_schema:timeout_duration_ms(), #{
+                default => <<"500ms">>, desc => ?DESC("batch_interval")
+            })}
     ];
 fields(connector_fields) ->
     % ConnModuleFields = emqx_bridge_hstreamdb_connector:fields(config),

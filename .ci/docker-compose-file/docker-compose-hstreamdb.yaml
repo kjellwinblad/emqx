@@ -9,8 +9,8 @@ services:
         condition: service_started
       hstore:
         condition: service_healthy
-    # ports:
-    #   - "127.0.0.1:6570:6570"
+    ports:
+      - "127.0.0.1:6570:6570"
     expose:
       - 6570
     networks:

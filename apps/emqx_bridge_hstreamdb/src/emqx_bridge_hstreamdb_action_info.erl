@@ -25,7 +25,6 @@ connector_type_name() -> hstreamdb.
 schema_module() -> emqx_bridge_hstreamdb.
 
 bridge_v1_config_to_connector_config(BridgeV1Conf) ->
-    x:show(xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx_conn, BridgeV1Conf),
     ConnectorSchema = emqx_bridge_hstreamdb:fields(connector_fields),
     ConnectorAtomKeys = lists:foldl(fun({K, _}, Acc) -> [K | Acc] end, [], ConnectorSchema),
     ConnectorBinKeys = [atom_to_list(K) || K <- ConnectorAtomKeys] ++ [<<"resource_opts">>],
@@ -37,7 +36,6 @@ bridge_v1_config_to_connector_config(BridgeV1Conf) ->
     ).
 
 bridge_v1_config_to_action_config(BridgeV1Conf, ConnectorName) ->
-    x:show(xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx_action, BridgeV1Conf),
     Config0 = emqx_action_info:transform_bridge_v1_config_to_action_config(
         BridgeV1Conf, ConnectorName, emqx_bridge_hstreamdb, "config_connector"
     ),
@@ -57,7 +55,6 @@ bridge_v1_config_to_action_config(BridgeV1Conf, ConnectorName) ->
     %{writer_pool_size, mk(integer(), #{default => 8, desc => ?DESC("writer_pool_size")})}
     %% Move pool_size to aggregation_pool_size and writer_pool_size
     PoolSize = maps:get(<<"pool_size">>, BridgeV1Conf, 8),
-    x:show(my_pool_size, PoolSize),
     Config2 = emqx_utils_maps:deep_put(
         [<<"parameters">>, <<"aggregation_pool_size">>],
         Config1,
@@ -68,7 +65,6 @@ bridge_v1_config_to_action_config(BridgeV1Conf, ConnectorName) ->
         Config2,
         PoolSize
     ),
-    x:show(out____________________________kkkkkkkkkkkkkk),
     Config3.
 
 connector_action_config_to_bridge_v1_config(ConnectorConfig, ActionConfig) ->
