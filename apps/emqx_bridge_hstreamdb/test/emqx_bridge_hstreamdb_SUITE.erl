@@ -354,6 +354,11 @@ t_to_hrecord_failed(Config) ->
     end,
     ok.
 
+%% Connector Action Tests
+
+t_action_on_get_status(Config) ->
+    emqx_bridge_v2_testlib:t_on_get_status(Config, #{failure_status => connecting}).
+
 %%------------------------------------------------------------------------------
 %% Helper fns
 %%------------------------------------------------------------------------------
@@ -365,6 +370,10 @@ common_init(ConfigT) ->
     URL = "http://" ++ Host ++ ":" ++ RawPort,
 
     Config0 = [
+        {bridge_type, <<"hstreamdb">>},
+        {bridge_name, <<"my_hstreamdb_action">>},
+        {connector_type, <<"hstreamdb">>},
+        {connector_name, <<"my_hstreamdb_connector">>},
         {hstreamdb_host, Host},
         {hstreamdb_port, Port},
         {hstreamdb_url, URL},
@@ -396,6 +405,8 @@ common_init(ConfigT) ->
                     {hstreamdb_config, HStreamDBConf},
                     {hstreamdb_bridge_type, BridgeType},
                     {hstreamdb_name, Name},
+                    {bridge_config, action_config(Config0)},
+                    {connector_config, connector_config(Config0)},
                     {proxy_host, ProxyHost},
                     {proxy_port, ProxyPort}
                     | Config0
@@ -427,7 +438,7 @@ hstreamdb_config(BridgeType, Config) ->
             "  resource_opts = {\n"
             %% always sync
             "    query_mode = sync\n"
-            "    request_ttl = 500ms\n"
+            "    request_ttl = 10000ms\n"
             "    batch_size = ~b\n"
             "    worker_pool_size = ~b\n"
             "  }\n"
@@ -445,6 +456,45 @@ hstreamdb_config(BridgeType, Config) ->
             ]
         ),
     {Name, parse_and_check(ConfigString, BridgeType, Name)}.
+
+action_config(Config) ->
+    ConnectorName = ?config(connector_name, Config),
+    BatchSize = batch_size(Config),
+    #{
+        <<"connector">> => ConnectorName,
+        <<"enable">> => true,
+        <<"parameters">> =>
+            #{
+                <<"aggregation_pool_size">> => ?POOL_SIZE,
+                <<"record_template">> => ?RECORD_TEMPLATE,
+                <<"stream">> => ?STREAM,
+                <<"writer_pool_size">> => ?POOL_SIZE
+            },
+        <<"resource_opts">> =>
+            #{
+                <<"batch_size">> => BatchSize,
+                <<"health_check_interval">> => <<"15s">>,
+                <<"inflight_window">> => 100,
+                <<"max_buffer_bytes">> => <<"256MB">>,
+                <<"query_mode">> => <<"sync">>,
+                <<"request_ttl">> => <<"45s">>,
+                <<"worker_pool_size">> => ?POOL_SIZE
+            }
+    }.
+
+connector_config(Config) ->
+    Port = integer_to_list(?config(hstreamdb_port, Config)),
+    URL = "http://" ++ ?config(hstreamdb_host, Config) ++ ":" ++ Port,
+    #{
+        <<"url">> => URL,
+        <<"ssl">> =>
+            #{<<"enable">> => false, <<"verify">> => <<"verify_peer">>},
+        <<"grpc_timeout">> => <<"30s">>,
+        <<"resource_opts">> => #{
+            <<"health_check_interval">> => <<"15s">>,
+            <<"start_timeout">> => <<"5s">>
+        }
+    }.
 
 parse_and_check(ConfigString, BridgeType, Name) ->
     {ok, RawConf} = hocon:binary(ConfigString, #{format => map}),
