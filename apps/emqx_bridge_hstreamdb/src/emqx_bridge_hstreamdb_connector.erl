@@ -97,15 +97,6 @@ on_add_channel(
             {error, {Error, Reason, Stack}}
     end.
 
-% create_channel_state(
-%     ChannelId,
-%     PoolName,
-%     #{parameters := Conf} = _ChannelConfig
-% ) ->
-%     State0 = parse_prepare_sql(ChannelId, Conf),
-%     State1 = init_prepare(PoolName, State0),
-%     {ok, State1}.
-
 on_remove_channel(
     _InstId,
     #{
@@ -128,37 +119,11 @@ on_get_channel_status(
     _State
 ) ->
     ?status_connected.
-% State = maps:get(ChannelId, Channels),
-% case do_check_prepares(ChannelId, PoolName, State) of
-%     ok ->
-%         ?status_connected;
-%     {error, undefined_table} ->
-%         %% return new state indicating that we are connected but the target table is not created
-%         {?status_disconnected, {unhealthy_target, ?UNHEALTHY_TARGET_MSG}};
-%     {error, _Reason} ->
-%         %% do not log error, it is logged in prepare_sql_to_conn
-%         ?status_connecting
-% end.
 
 on_get_channels(ResId) ->
     emqx_bridge_v2:get_channels_for_connector(ResId).
 
 on_stop(_InstId, _State) ->
-    % case emqx_resource:get_allocated_resources(InstId) of
-    %     #{?hstreamdb_client := #{client := Client, producer := Producer}} ->
-    %         StopClientRes = hstreamdb:stop_client(Client),
-    %         StopProducerRes = hstreamdb:stop_producer(Producer),
-    %         ?SLOG(info, #{
-    %             msg => "stop_hstreamdb_connector",
-    %             connector => InstId,
-    %             client => Client,
-    %             producer => Producer,
-    %             stop_client => StopClientRes,
-    %             stop_producer => StopProducerRes
-    %         });
-    %     _ ->
-    %         ok
-    % end.
     ok.
 
 -define(FAILED_TO_APPLY_HRECORD_TEMPLATE,
@@ -250,20 +215,6 @@ do_on_start(InstId, Config) ->
         config => Config
     }),
     {ok, _} = application:ensure_all_started(hstreamdb_erl),
-    % ClientName = client_name(InstId),
-    % RpcOpts =
-    %     case maps:get(enable, SSL) of
-    %         false ->
-    %             #{pool_size => PoolSize};
-    %         true ->
-    %             #{
-    %                 pool_size => PoolSize,
-    %                 gun_opts => #{
-    %                     transport => tls,
-    %                     transport_opts => emqx_tls_lib:to_client_opts(SSL)
-    %                 }
-    %             }
-    %     end,
     ClientOptions = client_options(Config),
     State = #{
         client_options => ClientOptions,
@@ -276,7 +227,6 @@ do_on_start(InstId, Config) ->
                 connector => InstId
             }),
             {ok, State};
-        %%start_producer(InstId, Client, Config);
         Error ->
             ?tp(
                 hstreamdb_connector_start_failed,
@@ -339,8 +289,6 @@ start_client(Opts) ->
             {error, Error}
     end.
 
-%% start_producer,[<<"action:hstreamdb:my_hstream_db:connector:hstreamdb:my_hstream_db">>,
-%% #{stream => <<"mqtt_message">>,batch_size => 100,partition_key => <<"hej">>,client_options => #{url => "http://127.0.0.1:6570",grpc_timeout => 30000,rpc_options => #{pool_size => 1}},writer_pool_size => 8,record_template => <<"${payload}">>,batch_interval => 500,aggregation_pool_size => 8,grpc_flush_timeout => 10000}]
 start_producer(
     ActionId,
     #{
@@ -371,9 +319,6 @@ start_producer(
     },
     Name = produce_name(ActionId),
     ensure_start_producer(Name, ProducerOptions).
-% start_producer(ActionId, Config) ->
-%     start_producer(ActionId, Config#{<<"batch_size">> => ?DEFAULT_BATCH_SIZE,
-%                                      <<"batch_interval">> => ?DEFAULT_BATCH_INTERVAL}).
 
 ensure_start_producer(ProducerName, ProducerOptions) ->
     case hstreamdb:start_producer(ProducerName, ProducerOptions) of
@@ -381,7 +326,6 @@ ensure_start_producer(ProducerName, ProducerOptions) ->
             ok;
         {error, {already_started, _Pid}} ->
             %% HStreamDB producer already started, restart it
-            %% ?LOG(warning, "HStreamDB producer already started, restart it: ~p", [ProducerName]),
             _ = hstreamdb:stop_producer(ProducerName),
             %% the pool might have been leaked after relup
             _ = ecpool:stop_sup_pool(ProducerName),
@@ -407,62 +351,6 @@ ensure_start_producer(ProducerName, ProducerOptions) ->
 produce_name(ActionId) ->
     list_to_atom("backend_hstream_producer:" ++ to_string(ActionId)).
 
-% start_producer(
-%     InstId,
-%     Client,
-%     Options = #{stream := Stream, pool_size := PoolSize}
-% ) ->
-%     %% TODO: change these batch options after we have better disk cache.
-%     BatchSize = maps:get(batch_size, Options, 100),
-%     Interval = maps:get(batch_interval, Options, 1000),
-%     ProducerOptions = [
-%         {stream, Stream},
-%         {callback, {?MODULE, on_flush_result, []}},
-%         {max_records, BatchSize},
-%         {interval, Interval},
-%         {pool_size, PoolSize},
-%         {grpc_timeout, maps:get(grpc_timeout, Options, ?DEFAULT_GRPC_TIMEOUT)}
-%     ],
-%     Name = produce_name(InstId),
-%     ?SLOG(info, #{
-%         msg => "starting_hstreamdb_connector_producer",
-%         connector => InstId
-%     }),
-%     case hstreamdb:start_producer(Client, Name, ProducerOptions) of
-%         {ok, Producer} ->
-%             ?SLOG(info, #{
-%                 msg => "hstreamdb_connector_producer_started"
-%             }),
-%             State = #{
-%                 client => Client,
-%                 producer => Producer,
-%                 enable_batch => maps:get(enable_batch, Options, false),
-%                 partition_key => emqx_placeholder:preproc_tmpl(
-%                     maps:get(partition_key, Options, <<"">>)
-%                 ),
-%                 record_template => record_template(Options)
-%             },
-%             ok = emqx_resource:allocate_resource(InstId, ?hstreamdb_client, #{
-%                 client => Client, producer => Producer
-%             }),
-%             {ok, State};
-%         {error, {already_started, Pid}} ->
-%             ?SLOG(info, #{
-%                 msg =>
-%                     "starting_hstreamdb_connector_producer_find_old_producer_restart_producer",
-%                 old_producer_pid => Pid,
-%                 old_producer_name => Name
-%             }),
-%             _ = hstreamdb:stop_producer(Name),
-%             start_producer(InstId, Client, Options);
-%         {error, Reason} ->
-%             ?SLOG(error, #{
-%                 msg => "starting_hstreamdb_connector_producer_failed",
-%                 reason => Reason
-%             }),
-%             {error, Reason}
-%     end.
-
 to_record(PartitionKeyTmpl, HRecordTmpl, Data) ->
     PartitionKey = emqx_placeholder:proc_tmpl(PartitionKeyTmpl, Data),
     RawRecord = emqx_placeholder:proc_tmpl(HRecordTmpl, Data),
@@ -480,27 +368,6 @@ to_multi_part_records(PartitionKeyTmpl, HRecordTmpl, BatchList) ->
         end,
         BatchList
     ).
-
-% do_append(Metadata, ActId, true, Producer, Record) ->
-%     case hstreamdb:append(Producer, Record) of
-%         ok ->
-%             ?LOG_RULE_ACTION(debug, Metadata, "hstreamdb ~p append record: ~p", [Producer, Record]),
-%             ok;
-%         {error, Reason} ->
-%             ?LOG_RULE_ACTION(error, Metadata, "hstreamdb append failed ~p", [Reason]),
-%             emqx_rule_metrics:inc_actions_error(ActId),
-%             {badact, Reason}
-%     end;
-% do_append(Metadata, ActId, false, Producer, Record) ->
-%     case hstreamdb:append_flush(Producer, Record) of
-%         {ok, _} ->
-%             ?LOG_RULE_ACTION(debug, Metadata, "hstreamdb ~p append record: ~p", [Producer, Record]),
-%             emqx_rule_metrics:inc_actions_success(ActId);
-%         {error, Reason} ->
-%             ?LOG_RULE_ACTION(error, Metadata, "hstreamdb append failed ~p", [Reason]),
-%             emqx_rule_metrics:inc_actions_error(ActId),
-%             {badact, Reason}
-%     end.
 
 append_record(Producer, MultiPartsRecords, MaybeBatch) when is_list(MultiPartsRecords) ->
     lists:foreach(
@@ -541,9 +408,6 @@ handle_result({error, Reason} = Err, Record, IsBatch) ->
         is_batch => IsBatch
     }),
     Err.
-
-% client_name(InstId) ->
-%     "client:" ++ to_string(InstId).
 
 record_template(#{record_template := RawHRecordTemplate}) ->
     emqx_placeholder:preproc_tmpl(RawHRecordTemplate);

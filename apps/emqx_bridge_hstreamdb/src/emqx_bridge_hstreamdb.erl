@@ -65,8 +65,6 @@ conn_bridge_example_values(post) ->
 conn_bridge_example_values(_) ->
     #{}.
 
-%% TODO fix these examples
-
 connector_examples(Method) ->
     [
         #{
@@ -82,12 +80,13 @@ connector_examples(Method) ->
 
 connector_values() ->
     #{
-        <<"username">> => <<"system">>,
-        <<"password">> => <<"oracle">>,
-        <<"server">> => <<"127.0.0.1:1521">>,
-        <<"service_name">> => <<"XE">>,
-        <<"sid">> => <<"XE">>,
-        <<"pool_size">> => 8,
+        <<"url">> => <<"http://127.0.0.1:6570">>,
+        <<"grpc_timeout">> => <<"30s">>,
+        <<"ssl">> =>
+            #{
+                <<"enable">> => false,
+                <<"verify">> => <<"verify_peer">>
+            },
         <<"resource_opts">> =>
             #{
                 <<"health_check_interval">> => <<"15s">>,
@@ -98,9 +97,9 @@ connector_values() ->
 bridge_v2_examples(Method) ->
     [
         #{
-            <<"oracle">> =>
+            <<"hstreamdb">> =>
                 #{
-                    summary => <<"Oracle Action">>,
+                    summary => <<"HStreamDB Action">>,
                     value => emqx_bridge_v2_schema:action_values(
                         Method, ?ACTION_TYPE, ?CONNECTOR_TYPE, action_values()
                     )
@@ -110,8 +109,12 @@ bridge_v2_examples(Method) ->
 
 action_values() ->
     #{
-        parameters => #{
-            <<"sql">> => <<>>
+        <<"parameters">> => #{
+            <<"aggregation_pool_size">> => 8,
+            <<"partition_key">> => <<"hej">>,
+            <<"record_template">> => <<"${payload}">>,
+            <<"stream">> => <<"mqtt_message">>,
+            <<"writer_pool_size">> => 8
         }
     }.
 
