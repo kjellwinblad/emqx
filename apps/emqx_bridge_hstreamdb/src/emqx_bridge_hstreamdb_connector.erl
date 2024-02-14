@@ -123,15 +123,18 @@ on_get_channel_status(
 on_get_channels(ResId) ->
     emqx_bridge_v2:get_channels_for_connector(ResId).
 
-on_stop(_InstId, _State) ->
-    ok.
+on_stop(InstId, _State) ->
+    ?tp(
+        hstreamdb_connector_on_stop,
+        #{instance_id => InstId}
+    ).
 
 -define(FAILED_TO_APPLY_HRECORD_TEMPLATE,
     {error, {unrecoverable_error, failed_to_apply_hrecord_template}}
 ).
 
 on_query(
-    _InstId,
+    InstId,
     {ChannelID, Data},
     #{installed_channels := Channels} = _State
 ) ->
@@ -139,13 +142,13 @@ on_query(
         producer := Producer, partition_key := PartitionKey, record_template := HRecordTemplate
     } = maps:get(ChannelID, Channels),
     try to_record(PartitionKey, HRecordTemplate, Data) of
-        Record -> append_record(Producer, Record, false)
+        Record -> append_record(InstId, Producer, Record, false)
     catch
         _:_ -> ?FAILED_TO_APPLY_HRECORD_TEMPLATE
     end.
 
 on_batch_query(
-    _InstId,
+    InstId,
     [{ChannelID, _Data} | _] = BatchList,
     #{installed_channels := Channels} = _State
 ) ->
@@ -153,7 +156,7 @@ on_batch_query(
         producer := Producer, partition_key := PartitionKey, record_template := HRecordTemplate
     } = maps:get(ChannelID, Channels),
     try to_multi_part_records(PartitionKey, HRecordTemplate, BatchList) of
-        Records -> append_record(Producer, Records, true)
+        Records -> append_record(InstId, Producer, Records, true)
     catch
         _:_ -> ?FAILED_TO_APPLY_HRECORD_TEMPLATE
     end.
@@ -349,7 +352,7 @@ ensure_start_producer(ProducerName, ProducerOptions) ->
     ProducerName.
 
 produce_name(ActionId) ->
-    list_to_atom("backend_hstream_producer:" ++ to_string(ActionId)).
+    list_to_binary("backend_hstream_producer:" ++ to_string(ActionId)).
 
 to_record(PartitionKeyTmpl, HRecordTmpl, Data) ->
     PartitionKey = emqx_placeholder:proc_tmpl(PartitionKeyTmpl, Data),
@@ -369,37 +372,40 @@ to_multi_part_records(PartitionKeyTmpl, HRecordTmpl, BatchList) ->
         BatchList
     ).
 
-append_record(Producer, MultiPartsRecords, MaybeBatch) when is_list(MultiPartsRecords) ->
+append_record(ResourceId, Producer, MultiPartsRecords, MaybeBatch) when
+    is_list(MultiPartsRecords)
+->
     lists:foreach(
-        fun(Record) -> append_record(Producer, Record, MaybeBatch) end, MultiPartsRecords
+        fun(Record) -> append_record(ResourceId, Producer, Record, MaybeBatch) end,
+        MultiPartsRecords
     );
-append_record(Producer, Record, MaybeBatch) when is_tuple(Record) ->
-    do_append_records(Producer, Record, MaybeBatch).
+append_record(ResourceId, Producer, Record, MaybeBatch) when is_tuple(Record) ->
+    do_append_records(ResourceId, Producer, Record, MaybeBatch).
 
 %% TODO: only sync request supported. implement async request later.
-do_append_records(Producer, Record, true = IsBatch) ->
+do_append_records(ResourceId, Producer, Record, true = IsBatch) ->
     Result = hstreamdb:append(Producer, Record),
-    handle_result(Result, Record, IsBatch);
-do_append_records(Producer, Record, false = IsBatch) ->
+    handle_result(ResourceId, Result, Record, IsBatch);
+do_append_records(ResourceId, Producer, Record, false = IsBatch) ->
     Result = hstreamdb:append_flush(Producer, Record),
-    handle_result(Result, Record, IsBatch).
+    handle_result(ResourceId, Result, Record, IsBatch).
 
-handle_result(ok = Result, Record, IsBatch) ->
-    handle_result({ok, Result}, Record, IsBatch);
-handle_result({ok, Result}, Record, IsBatch) ->
+handle_result(ResourceId, ok = Result, Record, IsBatch) ->
+    handle_result(ResourceId, {ok, Result}, Record, IsBatch);
+handle_result(ResourceId, {ok, Result}, Record, IsBatch) ->
     ?tp(
         hstreamdb_connector_query_append_return,
-        #{result => Result, is_batch => IsBatch}
+        #{result => Result, is_batch => IsBatch, instance_id => ResourceId}
     ),
     ?SLOG(debug, #{
         msg => "hstreamdb_producer_sync_append_success",
         record => Record,
         is_batch => IsBatch
     });
-handle_result({error, Reason} = Err, Record, IsBatch) ->
+handle_result(ResourceId, {error, Reason} = Err, Record, IsBatch) ->
     ?tp(
         hstreamdb_connector_query_append_return,
-        #{error => Reason, is_batch => IsBatch}
+        #{error => Reason, is_batch => IsBatch, instance_id => ResourceId}
     ),
     ?SLOG(error, #{
         msg => "hstreamdb_producer_sync_append_failed",

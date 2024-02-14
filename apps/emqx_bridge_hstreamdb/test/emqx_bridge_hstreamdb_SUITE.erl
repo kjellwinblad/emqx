@@ -117,15 +117,20 @@ end_per_suite(_Config) ->
     ok.
 
 init_per_testcase(t_to_hrecord_failed, Config) ->
+    init_per_testcase_common(),
     meck:new([hstreamdb], [passthrough, no_history, no_link]),
     meck:expect(hstreamdb, to_record, fun(_, _, _) -> error(trans_to_hrecord_failed) end),
     Config;
 init_per_testcase(_Testcase, Config) ->
+    init_per_testcase_common(),
     %% drop stream and will create a new one in common_init/1
     %% TODO: create a new stream for each test case
     delete_bridge(Config),
     snabbkaffe:start_trace(),
     Config.
+
+init_per_testcase_common() ->
+    emqx_bridge_v2_testlib:delete_all_bridges_and_connectors().
 
 end_per_testcase(t_to_hrecord_failed, _Config) ->
     meck:unload([hstreamdb]);
@@ -358,6 +363,19 @@ t_to_hrecord_failed(Config) ->
 
 t_action_on_get_status(Config) ->
     emqx_bridge_v2_testlib:t_on_get_status(Config, #{failure_status => connecting}).
+
+t_action_create_via_http(Config) ->
+    emqx_bridge_v2_testlib:t_create_via_http(Config).
+
+t_action_sync_query(Config) ->
+    MakeMessageFun = fun() -> rand_data() end,
+    IsSuccessCheck = fun(Result) -> ?assertEqual(ok, Result) end,
+    TracePoint = hstreamdb_connector_query_append_return,
+    emqx_bridge_v2_testlib:t_sync_query(Config, MakeMessageFun, IsSuccessCheck, TracePoint).
+
+t_action_start_stop(Config) ->
+    StopTracePoint = hstreamdb_connector_on_stop,
+    emqx_bridge_v2_testlib:t_start_stop(Config, StopTracePoint).
 
 %%------------------------------------------------------------------------------
 %% Helper fns
