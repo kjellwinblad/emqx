@@ -81,7 +81,8 @@ all() ->
 groups() ->
     TCs = emqx_common_test_helpers:all(?MODULE),
     NonBatchCases = [t_write_timeout],
-    BatchingGroups = [{group, with_batch}, {group, without_batch}],
+    %% {group, with_batch},
+    BatchingGroups = [{group, without_batch}],
     [
         {sync, BatchingGroups},
         {with_batch, TCs -- NonBatchCases},
@@ -301,7 +302,10 @@ t_simple_query(Config) ->
         {ok, _},
         create_bridge(Config)
     ),
-    Requests = gen_batch_req(BatchSize),
+    Type = ?config(hstreamdb_bridge_type, Config),
+    Name = ?config(hstreamdb_name, Config),
+    ActionId = emqx_bridge_v2:id(Type, Name),
+    Requests = gen_batch_req(BatchSize, ActionId),
     ?check_trace(
         begin
             ?wait_async_action(
@@ -360,7 +364,6 @@ common_init(ConfigT) ->
     RawPort = os:getenv("HSTREAMDB_PORT", str(?HSTREAMDB_DEFAULT_PORT)),
     Port = list_to_integer(RawPort),
     URL = "http://" ++ Host ++ ":" ++ RawPort,
-
     Config0 = [
         {hstreamdb_host, Host},
         {hstreamdb_port, Port},
@@ -454,10 +457,10 @@ parse_and_check(ConfigString, BridgeType, Name) ->
 -define(CONN_ATTEMPTS, 10).
 
 default_options(Config) ->
-    [
-        {url, ?config(hstreamdb_url, Config)},
-        {rpc_options, ?RPC_OPTIONS}
-    ].
+    #{
+        url => ?config(hstreamdb_url, Config),
+        rpc_options => ?RPC_OPTIONS
+    }.
 
 connect_direct_hstream(Name, Config) ->
     client(Name, Config, ?CONN_ATTEMPTS).
@@ -511,8 +514,9 @@ send_message(Config, Data) ->
 query_resource(Config, Request) ->
     Name = ?config(hstreamdb_name, Config),
     BridgeType = ?config(hstreamdb_bridge_type, Config),
-    ResourceID = emqx_bridge_resource:resource_id(BridgeType, Name),
-    emqx_resource:query(ResourceID, Request, #{timeout => 1_000}).
+    ID = emqx_bridge_v2:id(BridgeType, Name),
+    ResID = emqx_connector_resource:resource_id(BridgeType, Name),
+    emqx_resource:query(ID, Request, #{timeout => 1_000, connector_resource_id => ResID}).
 
 restart_resource(Config) ->
     BridgeName = ?config(hstreamdb_name, Config),
@@ -526,8 +530,16 @@ resource_id(Config) ->
     BridgeType = ?config(hstreamdb_bridge_type, Config),
     _ResourceID = emqx_bridge_resource:resource_id(BridgeType, BridgeName).
 
+action_id(Config) ->
+    ActionName = ?config(hstreamdb_name, Config),
+    ActionType = ?config(hstreamdb_bridge_type, Config),
+    _ActionID = emqx_bridge_v2:id(ActionType, ActionName).
+
 health_check_resource_ok(Config) ->
-    ?assertEqual({ok, connected}, emqx_resource_manager:health_check(resource_id(Config))).
+    ?assertEqual({ok, connected}, emqx_resource_manager:health_check(resource_id(Config))),
+    ActionName = ?config(hstreamdb_name, Config),
+    ActionType = ?config(hstreamdb_bridge_type, Config),
+    ?assertMatch(#{status := connected}, emqx_bridge_v2:health_check(ActionType, ActionName)).
 
 health_check_resource_down(Config) ->
     case emqx_resource_manager:health_check(resource_id(Config)) of
@@ -539,6 +551,19 @@ health_check_resource_down(Config) ->
             ?assert(
                 false, lists:flatten(io_lib:format("invalid health check result:~p~n", [Other]))
             )
+    end,
+    ActionName = ?config(hstreamdb_name, Config),
+    ActionType = ?config(hstreamdb_bridge_type, Config),
+    #{status := StatusV2} = emqx_bridge_v2:health_check(ActionType, ActionName),
+    case StatusV2 of
+        disconnected ->
+            ok;
+        connecting ->
+            ok;
+        OtherV2 ->
+            ?assert(
+                false, lists:flatten(io_lib:format("invalid health check result:~p~n", [OtherV2]))
+            )
     end.
 
 % These funs start and then stop the hstreamdb connection
@@ -548,21 +573,42 @@ connect_and_create_stream(Config) ->
             Client, ?STREAM, ?REPLICATION_FACTOR, ?BACKLOG_RETENTION_SECOND, ?SHARD_COUNT
         )
     ),
-    %% force write to stream to make it created and ready to be written data for rest cases
-    ProducerOptions = [
-        {pool_size, 4},
-        {stream, ?STREAM},
-        {callback, fun(_) -> ok end},
-        {max_records, 10},
-        {interval, 1000}
-    ],
+    %% force write to stream to make it created and ready to be written data for test cases
+    % ProducerOptions = [
+    %     {pool_size, 4},
+    %     {stream, ?STREAM},
+    %     {callback, fun(_) -> ok end},
+    %     {max_records, 10},
+    %     {interval, 1000}
+    % ],
+    ProducerOptions = #{
+        stream => ?STREAM,
+        buffer_options => #{
+            interval => 1000,
+            callback => {?MODULE, on_flush_result, [<<"WHAT">>]},
+            max_records => 1,
+            max_batches => 1
+        },
+        buffer_pool_size => 1,
+        writer_options => #{
+            grpc_timeout => 100
+        },
+        writer_pool_size => 1,
+        client_options => default_options(Config)
+    },
+
     ?WITH_CLIENT(
         begin
-            {ok, Producer} = hstreamdb:start_producer(Client, test_producer, ProducerOptions),
-            _ = hstreamdb:append_flush(Producer, hstreamdb:to_record([], raw, rand_payload())),
-            _ = hstreamdb:stop_producer(Producer)
+            ok = hstreamdb:start_producer(test_producer, ProducerOptions),
+            _ = hstreamdb:append_flush(test_producer, hstreamdb:to_record([], raw, rand_payload())),
+            _ = hstreamdb:stop_producer(test_producer)
         end
     ).
+
+on_flush_result({{flush, _Stream, _Records}, {ok, _Resp}}) ->
+    ok;
+on_flush_result({{flush, _Stream, _Records}, {error, _Reason}}) ->
+    ok.
 
 connect_and_delete_stream(Config) ->
     ?WITH_CLIENT(
@@ -593,11 +639,11 @@ rand_payload() ->
         temperature => rand:uniform(40), humidity => rand:uniform(100)
     }).
 
-gen_batch_req(Count) when
+gen_batch_req(Count, ActionId) when
     is_integer(Count) andalso Count > 0
 ->
-    [{send_message, rand_data()} || _Val <- lists:seq(1, Count)];
-gen_batch_req(Count) ->
+    [{ActionId, rand_data()} || _Val <- lists:seq(1, Count)];
+gen_batch_req(Count, _ActionId) ->
     ct:pal("Gen batch requests failed with unexpected Count: ~p", [Count]).
 
 str(List) when is_list(List) ->

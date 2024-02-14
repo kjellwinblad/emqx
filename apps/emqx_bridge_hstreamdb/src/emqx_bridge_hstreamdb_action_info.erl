@@ -27,7 +27,7 @@ schema_module() -> emqx_bridge_hstreamdb.
 bridge_v1_config_to_connector_config(BridgeV1Conf) ->
     ConnectorSchema = emqx_bridge_hstreamdb:fields(connector_fields),
     ConnectorAtomKeys = lists:foldl(fun({K, _}, Acc) -> [K | Acc] end, [], ConnectorSchema),
-    ConnectorBinKeys = [atom_to_list(K) || K <- ConnectorAtomKeys] ++ [<<"resource_opts">>],
+    ConnectorBinKeys = [atom_to_binary(K) || K <- ConnectorAtomKeys] ++ [<<"resource_opts">>],
     ConnectorConfig0 = maps:with(ConnectorBinKeys, BridgeV1Conf),
     emqx_utils_maps:update_if_present(
         <<"resource_opts">>,
@@ -81,7 +81,7 @@ connector_action_config_to_bridge_v1_config(ConnectorConfig, ActionConfig) ->
     lists:foldl(
         fun(Field, Acc) ->
             emqx_utils_maps:deep_put(
-                Field,
+                [Field],
                 Acc,
                 emqx_utils_maps:deep_get([<<"parameters">>, Field], ActionConfig, <<>>)
             )
