@@ -81,8 +81,7 @@ all() ->
 groups() ->
     TCs = emqx_common_test_helpers:all(?MODULE),
     NonBatchCases = [t_write_timeout],
-    %% {group, with_batch},
-    BatchingGroups = [{group, without_batch}],
+    BatchingGroups = [{group, with_batch}, {group, without_batch}],
     [
         {sync, BatchingGroups},
         {with_batch, TCs -- NonBatchCases},
@@ -364,6 +363,7 @@ common_init(ConfigT) ->
     RawPort = os:getenv("HSTREAMDB_PORT", str(?HSTREAMDB_DEFAULT_PORT)),
     Port = list_to_integer(RawPort),
     URL = "http://" ++ Host ++ ":" ++ RawPort,
+
     Config0 = [
         {hstreamdb_host, Host},
         {hstreamdb_port, Port},
@@ -574,13 +574,6 @@ connect_and_create_stream(Config) ->
         )
     ),
     %% force write to stream to make it created and ready to be written data for test cases
-    % ProducerOptions = [
-    %     {pool_size, 4},
-    %     {stream, ?STREAM},
-    %     {callback, fun(_) -> ok end},
-    %     {max_records, 10},
-    %     {interval, 1000}
-    % ],
     ProducerOptions = #{
         stream => ?STREAM,
         buffer_options => #{
