@@ -126,6 +126,9 @@ execute({get_item, Key}, Table) ->
 execute({send_message, Msg}, Table) ->
     Item = convert_to_item(Msg),
     erlcloud_ddb2:put_item(Table, Item);
+%execute({Bin, Msg}, Table) when is_binary(Bin) ->
+%    Item = convert_to_item(Msg),
+%    erlcloud_ddb2:put_item(Table, Item);
 execute([{put, _} | _] = Msgs, Table) ->
     %% type of batch_write_item argument :: batch_write_item_request_items()
     %% batch_write_item_request_items() :: maybe_list(batch_write_item_request_item())
@@ -144,7 +147,7 @@ apply_template({Key, Msg} = Req, Templates) ->
 %% 1. we can simply replace the `send_message` to `put`
 %% 2. convert the message to in_item() here, not at the time when calling `batch_write_items`,
 %%    so we can reduce some list map cost
-apply_template([{send_message, _Msg} | _] = Msgs, Templates) ->
+apply_template([{_, _Msg} | _] = Msgs, Templates) ->
     lists:map(
         fun(Req) ->
             {_, Msg} = apply_template(Req, Templates),
