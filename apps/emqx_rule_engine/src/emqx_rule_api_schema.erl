@@ -307,6 +307,17 @@ fields("ctx_delivery_dropped") ->
         {"from_clientid", sc(binary(), #{desc => ?DESC("event_from_clientid")})},
         {"from_username", sc(binary(), #{desc => ?DESC("event_from_username")})}
         | msg_event_common_fields()
+    ];
+fields("ctx_message_validation_failed") ->
+    Event = 'message.validation_failed',
+    [
+        {"event_type", event_type_sc(Event)},
+        {"clientid", sc(binary(), #{desc => ?DESC("event_clientid")})},
+        {"payload", sc(binary(), #{desc => ?DESC("event_payload")})},
+        qos(),
+        {"topic", sc(binary(), #{desc => ?DESC("event_topic")})},
+        {"username", sc(binary(), #{desc => ?DESC("event_username")})},
+        {"validation", sc(binary(), #{desc => ?DESC("event_validation")})}
     ].
 
 rule_input_message_context() ->
@@ -324,7 +335,8 @@ rule_input_message_context() ->
                 ref("ctx_connack"),
                 ref("ctx_check_authz_complete"),
                 ref("ctx_bridge_mqtt"),
-                ref("ctx_delivery_dropped")
+                ref("ctx_delivery_dropped"),
+                ref("ctx_message_validation_failed")
             ]),
             #{
                 desc => ?DESC("test_context"),
